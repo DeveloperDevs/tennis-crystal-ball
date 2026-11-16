@@ -7,3 +7,9 @@ out
 __pycache__/
 .DS_Store
 /ultimate-tennis-stats-data/
+
+# Claude Code (local only)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.mcp.json
