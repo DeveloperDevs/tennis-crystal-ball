@@ -165,7 +165,7 @@
 		$("#perfOpponent").val(""); perfOpponentChanged();
 		$("#perfCountry").val("");
 		$("#perfMinEntriesOverride").val("");
-		$("#perfActive").prop("checked", false);
+		$("#perfActive").prop("checked", $("#perfActive").data("default") === true);
 		$("#topPerformersTable").bootgrid("search", "");
 		reloadTopPerformers();
 	}
@@ -280,7 +280,7 @@
 <div id="perfActiveDiv" class="btn-group margin-right">
 	<div class="checkbox">
 		<label data-toggle="tooltip" data-placement="top" title="Show only active players">
-			<input id="perfActive" type="checkbox" onchange="reloadTopPerformers()"/> Active
+			<input id="perfActive" type="checkbox" th:checked="${@uiDefaults.activePlayersByDefault}" th:data-default="${@uiDefaults.activePlayersByDefault}" onchange="reloadTopPerformers()"/> Active
 		</label>
 	</div>
 </div>

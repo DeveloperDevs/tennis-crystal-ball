@@ -259,6 +259,8 @@ public class TournamentController extends PageController {
 		modelMap.addAttribute("inProgressEventId", inProgressEventId);
 		modelMap.addAttribute("tab", tab);
 		modelMap.addAttribute("forecast", forecast);
+		if (forecast.getEvent().isRoundRobin())
+			modelMap.addAttribute("roundRobinGroups", forecastService.getRoundRobinGroups(inProgressEventId));
 		modelMap.addAttribute("levels", TournamentLevel.asMap());
 		modelMap.addAttribute("surfaces", Surface.asMap());
 		modelMap.addAttribute("eloTypes", ForecastEloType.values());

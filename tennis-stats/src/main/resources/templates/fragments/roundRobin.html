@@ -1,0 +1,114 @@
+<th:block xmlns:th="http://www.thymeleaf.org">
+<!--/* Round-robin groups: per group, the players' tournament forecast and every group match's forecast (or result). */-->
+<!--/*@thymesVar id="groups" type="java.util.List<org.strangeforest.tcb.stats.model.forecast.RoundRobinGroup>"*/-->
+<!--/*@thymesVar id="results" type="java.util.Collection<java.lang.String>"*/-->
+<!--/*@thymesVar id="event" type="org.strangeforest.tcb.stats.model.forecast.InProgressEvent"*/-->
+<th:block th:fragment="groups(groups, results, event)">
+	<div class="row rr-groups" th:each="group : ${groups}">
+		<div class="col-md-6">
+			<table class="table table-condensed table-hover rr-table">
+				<thead>
+				<tr>
+					<th colspan="2" class="rr-group-name" th:text="${group.name}">Group A</th>
+					<th class="text-right" title="Won-lost in group matches">W-L</th>
+					<th class="text-right hidden-xs" title="Elo rating">Elo</th>
+					<th th:each="result : ${results}" class="text-right rr-prob" th:title="${result == 'W' ? 'Probability to win the title' : (result == 'F' ? 'Probability to reach the final' : (result == 'SF' ? 'Probability to reach the semi-finals' : result))}" th:text="${result == 'W' ? 'Title' : (result == 'F' ? 'Final' : (result == 'SF' ? 'Semis' : result))}">Title</th>
+				</tr>
+				</thead>
+				<tbody>
+				<tr th:each="entry : ${group.entries}" th:with="player=${entry.player}">
+					<td class="text-right text-muted rr-seed" th:text="${player.seed}" title="Seed">1</td>
+					<td class="text-nowrap">
+						<img th:src="@{/images/flags/{code}.png(code=${player.country.code})}" src="/images/flags/de.png" th:title="${player.country.id}" width="24" height="20"/>
+						<a th:href="@{/playerProfile(playerId=${player.id})}" th:text="${player.name}" style="vertical-align: middle" title="Show profile">Alexander Zverev</a>
+					</td>
+					<td class="text-right" th:text="${group.getWins(player.id) + '-' + group.getLosses(player.id)}">0-0</td>
+					<td class="text-right text-muted hidden-xs" th:text="${player.eloRating}">2224</td>
+					<td th:each="result : ${results}" class="text-right rr-prob" th:with="probability=${entry.getProbability(result)}">
+						<div class="rr-bar" th:style="'width: ' + ${#numbers.formatDecimal(probability, 1, 1)} + '%'"></div>
+						<span th:class="${probability == 0.0 ? 'text-muted' : _}" th:text="${#numbers.formatDecimal(probability, 1, 1) + '%'}">75.4%</span>
+					</td>
+				</tr>
+				</tbody>
+			</table>
+		</div>
+		<div class="col-md-6">
+			<table class="table table-condensed table-hover rr-table rr-matches">
+				<thead>
+				<tr>
+					<th class="hidden-xs">Date</th>
+					<th class="text-right">Player</th>
+					<th class="text-center" colspan="3" title="Match win probability, or the result once played">Win Probability</th>
+					<th>Opponent</th>
+				</tr>
+				</thead>
+				<tbody>
+				<tr th:each="match : ${group.matches}" th:with="p1=${match.player1}, p2=${match.player2}">
+					<td class="text-muted hidden-xs text-nowrap" th:text="${#temporals.format(match.date, 'EEE dd')}">Sun 15</td>
+					<td class="text-right text-nowrap" th:classappend="${match.winner == 1 ? 'rr-winner' : (match.winner == 2 ? 'rr-loser' : _)}">
+						<a th:href="@{/playerProfile(playerId=${p1.id})}" th:text="${p1.name}" title="Show profile">Alexander Zverev</a>
+						<img th:src="@{/images/flags/{code}.png(code=${p1.country.code})}" src="/images/flags/de.png" th:title="${p1.country.id}" width="24" height="20"/>
+					</td>
+					<th:block th:unless="${match.completed}">
+						<td class="text-right rr-pct" th:classappend="${match.probability1 >= 50.0 ? 'rr-fav' : _}">
+							<span th:text="${#numbers.formatDecimal(match.probability1, 1, 0) + '%'}">72%</span>
+							<span class="rr-h2h-num" th:classappend="${match.h2hWon1 > match.h2hWon2 ? 'rr-h2h-lead' : _}" th:text="${match.h2hWon1}">4</span>
+						</td>
+						<td class="rr-split">
+							<a th:href="@{/headToHead(playerId1=${p1.id}, playerId2=${p2.id}, tab=hypotheticalMatchup, level=${event.level}, surface=${event.surface}, indoor=${event.indoor}, round=RR)}"
+							   th:data-url="@{/h2hHypotheticalMatchup(playerId1=${p1.id}, playerId2=${p2.id}, level=${event.level}, surface=${event.surface}, indoor=${event.indoor}, round=RR, tournamentId=${event.tournamentId})}"
+							   th:data-title="${p1.name + ' vs ' + p2.name}" onclick="return showRRMatchPrediction(this)" title="Show match prediction details">
+								<div class="rr-split-bar"><div class="rr-split-1" th:style="'width: ' + ${#numbers.formatDecimal(match.probability1, 1, 1)} + '%'"></div></div>
+							</a>
+							<a class="rr-h2h" th:href="@{/headToHead(playerId1=${p1.id}, playerId2=${p2.id})}" title="Head-to-head before this event; show head-to-head">Head to Head</a>
+						</td>
+						<td class="rr-pct" th:classappend="${match.probability2 > 50.0 ? 'rr-fav' : _}">
+							<span th:text="${#numbers.formatDecimal(match.probability2, 1, 0) + '%'}">28%</span>
+							<span class="rr-h2h-num" th:classappend="${match.h2hWon2 > match.h2hWon1 ? 'rr-h2h-lead' : _}" th:text="${match.h2hWon2}">3</span>
+						</td>
+						</th:block>
+						<td th:if="${match.completed}" colspan="3" class="text-center text-nowrap rr-score">
+							<i class="fa" th:classappend="${match.winner == 1 ? 'fa-caret-left' : 'fa-caret-right'}"></i>
+							<span th:text="${match.score}">6-4 6-3</span>
+							<a class="rr-h2h" th:href="@{/headToHead(playerId1=${p1.id}, playerId2=${p2.id})}" title="Head-to-head before this event; show head-to-head">
+								<span class="rr-h2h-num" th:classappend="${match.h2hWon1 > match.h2hWon2 ? 'rr-h2h-lead' : _}" th:text="${match.h2hWon1}">4</span> - Head to Head - <span class="rr-h2h-num" th:classappend="${match.h2hWon2 > match.h2hWon1 ? 'rr-h2h-lead' : _}" th:text="${match.h2hWon2}">3</span>
+							</a>
+						</td>
+						<td class="text-nowrap" th:classappend="${match.winner == 2 ? 'rr-winner' : (match.winner == 1 ? 'rr-loser' : _)}">
+						<img th:src="@{/images/flags/{code}.png(code=${p2.country.code})}" src="/images/flags/es.png" th:title="${p2.country.id}" width="24" height="20"/>
+						<a th:href="@{/playerProfile(playerId=${p2.id})}" th:text="${p2.name}" title="Show profile">Rafael Jodar</a>
+					</td>
+				</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+	<div id="rrPredictionModal" class="modal fade" tabindex="-1" role="dialog" aria-labelledby="rrPredictionTitle">
+		<div class="modal-dialog modal-lg" role="document">
+			<div class="modal-content">
+				<div class="modal-header">
+					<button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+					<h4 id="rrPredictionTitle" class="modal-title">Match Prediction</h4>
+				</div>
+				<div class="modal-body">
+					<div id="hypotheticalMatchup"><div class="loading"></div></div>
+				</div>
+				<div class="modal-footer">
+					<a id="rrPredictionFullPage" href="#" class="btn btn-default btn-sm"><i class="fa fa-external-link"></i> Open Head-to-Head Page</a>
+					<button type="button" class="btn btn-primary btn-sm" data-dismiss="modal">Close</button>
+				</div>
+			</div>
+		</div>
+	</div>
+	<script type="text/javascript">
+		function showRRMatchPrediction(link) {
+			var $link = $(link);
+			$("#rrPredictionTitle").text($link.data("title") + " – Match Prediction");
+			$("#rrPredictionFullPage").attr("href", $link.attr("href"));
+			$("#hypotheticalMatchup").html("<div class='loading'></div>").load($link.data("url"));
+			$("#rrPredictionModal").modal("show");
+			return false;
+		}
+	</script>
+</th:block>
+</th:block>

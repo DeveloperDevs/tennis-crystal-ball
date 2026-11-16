@@ -1,10 +1,13 @@
 package org.strangeforest.tcb.dataload
 
+import static org.strangeforest.tcb.dataload.LoadParams.*
 import static org.strangeforest.tcb.dataload.LoaderUtil.*
 
 System.exit(loadTournaments(new SqlPool()) ? 0 : 80)
 
 static loadTournaments(SqlPool sqlPool) {
+	if (!getBooleanProperty(SCRAPE_PROPERTY, false))
+		return loadESPNTournaments(sqlPool)
 	sqlPool.withSql {sql ->
 		def atpInProgressTournamentLoader = new ATPTourInProgressTournamentLoader(sql)
 		def oldExtIds = atpInProgressTournamentLoader.findInProgressEventExtIds()
@@ -23,6 +26,29 @@ static loadTournaments(SqlPool sqlPool) {
 		if (oldExtIds) {
 			println "Removing finished in-progress tournaments: $oldExtIds"
 			atpInProgressTournamentLoader.completeInProgressEventExtIds(oldExtIds)
+			changed = true
+		}
+		changed
+	}
+}
+
+// In-progress draws from tools/espn-import/espn_in_progress.py (atptour.com draws are blocked)
+static loadESPNTournaments(SqlPool sqlPool) {
+	def events = ESPNInProgressTournamentLoader.readEvents(System.getProperty(BASE_DIR_PROPERTY))
+	if (events == null)
+		return false
+	sqlPool.withSql { sql ->
+		def loader = new ESPNInProgressTournamentLoader(sql)
+		def oldExtIds = loader.findInProgressEventExtIds()
+		def newExtIds = events.collect { it.ext_tournament_id as String }
+		println "In-progress tournaments: ${events.collect { it.name }}"
+		def changed = false
+		events.each { event -> changed |= loader.loadAndForecast(event, getBooleanProperty(VERBOSE_PROPERTY, VERBOSE_DEFAULT)) }
+		oldExtIds.removeAll(newExtIds)
+		if (oldExtIds) {
+			println "Marking finished in-progress tournaments as completed: $oldExtIds"
+			loader.completeInProgressEventExtIds(oldExtIds)
+			sql.commit()
 			changed = true
 		}
 		changed

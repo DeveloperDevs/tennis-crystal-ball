@@ -31,6 +31,9 @@ abstract class BaseCSVLoader {
 		println "Loading file '$file'"
 		def stopwatch = Stopwatch.createStarted()
 		List columnNames = columnNames()
+		// Newer Sackmann-format files have a header row even where the original ones did not; never load it as data
+		if (readFirstLine && hasHeaderRow(file))
+			readFirstLine = false
 		def csvParams = [readFirstLine: readFirstLine]
 		if (columnNames)
 			csvParams << [columnNames: columnNames]
@@ -38,6 +41,13 @@ abstract class BaseCSVLoader {
 		int rows = load(data)
 		printLoadInfo(stopwatch, rows)
 		return rows
+	}
+
+	private static boolean hasHeaderRow(String file) {
+		new File(file).withReader { reader ->
+			def firstField = reader.readLine()?.split(',', 2)?.getAt(0)?.trim()
+			firstField && !firstField.isNumber()
+		}
 	}
 
 	def load(Iterable data) {

@@ -281,8 +281,7 @@
 			if (surface)
 				url += "&surface=" + surface;
 			var active = $("#active").prop("checked");
-			if (active)
-				url += "&active=" + active;
+			url += "&active=" + active; // explicit either way: ticked is the default
 			var countryId = $("#countryId").val();
 			if (countryId)
 				url += "&countryId=" + countryId;
@@ -373,7 +372,6 @@
 </head>
 <body class="container">
 	<header th:include="fragments/header :: title"></header>
-	<th:block th:include="fragments/ads :: responsive"/>
 	<h3 id="goatListTable-title" class="grid-title text-nowrap">
 		<i class="fa fa-flag"></i> Open Era GOAT List
 		<a href="javascript:goatListPermalink()" title="Permalink to this GOAT List"><h4 style="margin: 0" class="glyphicon glyphicon-link"></h4></a>
@@ -388,7 +386,7 @@
 	<div id="activeDiv" class="btn-group margin-right">
 		<div class="checkbox">
 			<label data-toggle="tooltip" data-placement="top" title="Show only active players">
-				<input id="active" type="checkbox" th:checked="${active}" onchange="reloadGOATListTable()"/> Active players
+				<input id="active" type="checkbox" th:checked="${active != null ? active : false}" data-default="false" onchange="reloadGOATListTable()"/> Active players
 			</label>
 		</div>
 	</div>

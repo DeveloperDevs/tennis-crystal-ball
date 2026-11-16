@@ -133,7 +133,26 @@ VALUES
 ('Victor Palman', 'Viktor Palman'),
 ('William Krulewitz', 'Steve Krulevitz'),
 ('Yaraslav Shyla', 'Yaraslau Shyla'),
-('Yuya Kibi', 'Yuuya Kibi');
+('Yuya Kibi', 'Yuuya Kibi'),
+-- Old Sackmann spellings used by rankings-pre-atp.sql and tournaments/*.xml -> names in the 2026 archive
+('Bernard Mitton', 'Bernie Mitton'),
+('C Brebnor', 'Clive Brebnor'),
+('Clive S Brebnor', 'Clive Brebnor'),
+('Chris Lewis Nzl', 'Chris Lewis'),
+('Christophe Roger Vasselin', 'Christophe Roger-Vasselin'),
+('Dick R Bohrnstedt', 'Dick Bohrnstedt'),
+('Diego Sebastian Schwartzman', 'Diego Schwartzman'),
+('Graham B Primrose', 'Graham Primrose'),
+('Hans Jaochim Plotz', 'Hans Joachim Ploetz'),
+('Henry Hank Irvine', 'Hank Irvine'),
+('Jo Wilfried Tsonga', 'Jo-Wilfried Tsonga'),
+('Modesto Tito Vazquez', 'Tito Vazquez'),
+('Richard Pancho Gonzales', 'Richard Gonzalez'),
+('Robert Kreiss', 'Bob Kreiss'),
+('Robert Lutz', 'Bob Lutz'),
+('Tony Parun P071', 'Tony Parun'),
+('W Russell Seymour', 'Russell Seymour'),
+('William Durham', 'Bill Durham');
 
 DO $$ BEGIN
     CALL create_player('Agostino', 'Serra', NULL, 'ITA');

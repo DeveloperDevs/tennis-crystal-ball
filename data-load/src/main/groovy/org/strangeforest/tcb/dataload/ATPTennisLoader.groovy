@@ -11,10 +11,12 @@ import static org.strangeforest.tcb.dataload.SqlPool.*
 class ATPTennisLoader {
 
 	private final boolean full
+	private final int lastSeason
 	private String baseDir
 
 	ATPTennisLoader() {
 		full = getBooleanProperty(FULL_LOAD_PROPERTY, FULL_LOAD_DEFAULT)
+		lastSeason = getIntProperty(LAST_SEASON_PROPERTY, java.time.LocalDate.now().year)
 	}
 
 	def loadPlayers(loader) {
@@ -41,11 +43,19 @@ class ATPTennisLoader {
 		load {
 			def rows = 0
 			if (full) {
-				for (year in 1968..2020)
+				for (year in 1968..<lastSeason)
 					rows += loader.loadFile(baseDir() + "atp_matches_${year}.csv")
 			}
-			def year = 2021
-			rows += loader.loadFile(baseDir() + "atp_matches_${year}.csv")
+			// Delta load re-loads the last two seasons, so late-arriving matches from the previous season are picked up
+			def deltaFrom = full ? lastSeason : lastSeason - 1
+			for (year in deltaFrom..lastSeason) {
+				def file = baseDir() + "atp_matches_${year}.csv"
+				if (new File(file).exists())
+					rows += loader.loadFile(file)
+				else
+					println "Skipping missing file $file"
+			}
+			rows
 		}
 		println()
 	}
@@ -110,6 +120,8 @@ class ATPTennisLoader {
 			println 'Loading additional match data'
 
 			def atpTourMatchLoader = new ATPTourTournamentLoader(sql)
+			// These replace or patch pre-1984 events by scraping atptour.com (now blocked); the deletes are only valid together with the reloads
+			if (getBooleanProperty(SCRAPE_PROPERTY, false)) {
 			atpTourMatchLoader.loadTournament(1968, 'bloemfontein', 9343, false, 'B', 'H', '1968-01-08', ['R32', 'R64'], 'Bloemfontein')
 			atpTourMatchLoader.loadTournament(1968, 'hobart', 713, false, 'B', null, null, ['R16', 'R32', 'R64'])
 			atpTourMatchLoader.loadTournament(1968, 'durban', 260, false, 'B', 'H', '1968-01-14', ['R32', 'R64'], 'Durban')
@@ -303,6 +315,7 @@ class ATPTennisLoader {
 			atpTourMatchLoader.loadTournament(1977, 'hilton-head', 9340, false, 'B', 'C', '1977-09-26', [], 'World Invitational Tennis Classic')
 			atpTourMatchLoader.loadTournament(1979, 'masters', 605, false, 'F', null, null, [], 'Masters')
 			atpTourMatchLoader.loadTournament(1983, 'cleveland', 320, false, 'B')
+			} // end scrape
 
 			def xmlMatchLoader = new XMLMatchLoader(sql)
 			xmlMatchLoader.loadFile('classpath:/tournaments/1968-paris-indoor.xml')

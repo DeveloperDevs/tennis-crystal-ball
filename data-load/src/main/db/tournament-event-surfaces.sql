@@ -120,7 +120,7 @@ CALL set_tournament_event_surface(1974, 'Vienna', NULL, TRUE);
 CALL set_tournament_event_surface(1974, 'Stockholm', NULL, TRUE);
 
 -- 1975
-CALL set_tournament_event_surface(1975, 'Bahamas', 'H', FALSE);
+CALL set_tournament_event_surface(1975, 'Freeport', 'H', FALSE); -- 'Bahamas' in older Sackmann data
 CALL set_tournament_event_surface(1975, 'Roanoke', 'P', TRUE);
 CALL set_tournament_event_surface(1975, 'Shreveport', 'H', FALSE);
 CALL set_tournament_event_surface(1975, 'New York', 'H', TRUE);

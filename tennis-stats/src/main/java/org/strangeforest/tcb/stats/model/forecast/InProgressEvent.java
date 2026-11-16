@@ -60,6 +60,10 @@ public class InProgressEvent {
 		return indoor;
 	}
 
+	public boolean isRoundRobin() {
+		return "RR".equals(drawType);
+	}
+
 	public String getDraw() {
 		return drawType + (drawSize != null ? " " + drawSize : "");
 	}

@@ -302,6 +302,7 @@ class MatchLoader extends BaseCSVLoader {
 					return 'B'
 			case 'D': return 'D'
 			case 'C': return 'C'
+			case 'O': return 'O' // newer archive files tag Olympics directly (older ones use 'A' + name)
 			default: throw new IllegalArgumentException("Unknown tournament level: $level")
 		}
 	}
@@ -381,8 +382,14 @@ class MatchLoader extends BaseCSVLoader {
 			return null
 		switch (entry) {
 			case 'S': return 'SE'
+			case 'W': return 'WC'
+			case 'L': return 'LL'
 			case 'Alt':
 			case 'ALT': return 'AL'
+			// Newer archive codes (ITF ranking, Next Gen, UTR/university places) have no tournament_entry equivalent
+			case 'ITF':
+			case 'NG':
+			case 'UP': return null
 			default: entry
 		}
 	}

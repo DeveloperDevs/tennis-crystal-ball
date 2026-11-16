@@ -444,6 +444,31 @@ a.black:focus {
 	background-color: #dd7777;
 	font-size: 14px;
 }
-.empty-ad {
-	background-color: thistle;
-}
+
+/* Tournament forecast: home page panel and round-robin groups */
+table.featured-forecast td { vertical-align: middle !important; position: relative; }
+table.featured-forecast th:nth-child(n+5), table.featured-forecast td:nth-child(n+5) { width: 90px; }
+.featured-forecast-bar, .rr-bar { position: absolute; right: 5px; top: 4px; bottom: 4px; max-width: calc(100% - 10px); background-color: rgba(51, 122, 183, 0.18); border-radius: 2px; }
+table.featured-forecast td > span, table.rr-table td.rr-prob > span { position: relative; }
+table.rr-table { margin-bottom: 12px; }
+table.rr-table th { white-space: nowrap; }
+table.rr-table td { vertical-align: middle !important; position: relative; }
+table.rr-table td.rr-prob, table.rr-table th.rr-prob { width: 70px; }
+table.rr-table th.rr-group-name { font-size: 15px; }
+table.rr-table td.rr-seed { width: 24px; }
+table.rr-matches td.rr-pct { width: 42px; color: #777; padding-left: 2px; padding-right: 2px; }
+table.rr-matches td.rr-fav { color: #333; font-weight: bold; }
+table.rr-matches td.rr-split { width: 90px; }
+.rr-split-bar { width: 72px; margin: 0 auto; height: 10px; border-radius: 5px; background-color: #f0ad4e; overflow: hidden; }
+.rr-split-1 { height: 100%; background-color: #337ab7; }
+table.rr-matches td.rr-split, table.rr-matches td.rr-score { vertical-align: middle; }
+.rr-h2h { display: block; margin-top: 3px; font-size: 10px; font-weight: normal; line-height: 14px; color: #888; white-space: nowrap; text-align: center; }
+.rr-h2h:hover, .rr-h2h:focus { color: #555; text-decoration: none; }
+.rr-h2h-num { display: block; margin-top: 3px; font-size: 12px; line-height: 14px; font-weight: normal; color: #888; }
+.rr-h2h .rr-h2h-num { display: inline; }
+table.rr-matches .rr-h2h-num.rr-h2h-lead { font-weight: bold; color: #333; }
+table.rr-matches td.rr-winner a { font-weight: bold; }
+table.rr-matches td.rr-loser a { color: #999; }
+table.rr-matches td.rr-score { font-weight: bold; }
+#rrPredictionModal .modal-body { max-height: calc(100vh - 170px); overflow-y: auto; }
+.ui-datepicker { z-index: 1100 !important; }

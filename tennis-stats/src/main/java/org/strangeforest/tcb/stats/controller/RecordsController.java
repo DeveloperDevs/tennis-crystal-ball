@@ -36,7 +36,7 @@ public class RecordsController extends PageController {
 	@GetMapping("/record")
 	public ModelAndView record(
 		@RequestParam(name = "recordId") String recordId,
-		@RequestParam(name = "active", required = false, defaultValue = F) boolean active
+		@RequestParam(name = "active", required = false) Boolean active // null: template applies the UI default
 	) {
 		var goatPoints = goatLegendService.getRecordGOATPoints(recordId);
 

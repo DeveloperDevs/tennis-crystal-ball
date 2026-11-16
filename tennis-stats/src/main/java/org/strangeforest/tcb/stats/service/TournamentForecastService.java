@@ -71,7 +71,7 @@ public class TournamentForecastService {
 		"WITH entry_round AS (\n" +
 		"  SELECT min(round) AS entry_round FROM in_progress_match WHERE in_progress_event_id = :inProgressEventId\n" +
 		")\n" +
-		"SELECT m.player1_id, m.player1_seed, m.player1_entry, p1.name player1_name, p1.country_id player1_country_id, m.player1_rank, m.player1_elo_rating, m.player1_recent_elo_rating, m.player1_surface_elo_rating, m.player1_in_out_elo_rating, m.player1_set_elo_rating,\n" +
+		"SELECT m.round, m.player1_id, m.player1_seed, m.player1_entry, p1.name player1_name, p1.country_id player1_country_id, m.player1_rank, m.player1_elo_rating, m.player1_recent_elo_rating, m.player1_surface_elo_rating, m.player1_in_out_elo_rating, m.player1_set_elo_rating,\n" +
 		"  m.player2_id, m.player2_seed, m.player2_entry, p2.name player2_name, p2.country_id player2_country_id, m.player2_rank, m.player2_elo_rating, m.player2_recent_elo_rating, m.player2_surface_elo_rating, m.player2_in_out_elo_rating, m.player2_set_elo_rating\n" +
 		"FROM in_progress_match m\n" +
 		"LEFT JOIN player_v p1 ON p1.player_id = player1_id\n" +
@@ -89,7 +89,7 @@ public class TournamentForecastService {
 		"  coalesce(player1_next_set_elo_rating, player1_set_elo_rating) AS player1_next_set_elo_rating, coalesce(player2_next_set_elo_rating, player2_set_elo_rating) AS player2_next_set_elo_rating\n" +
 		"FROM in_progress_match\n" +
 		"WHERE in_progress_event_id = :inProgressEventId\n" +
-		"ORDER BY round, match_num";
+		"ORDER BY round, date, match_num";
 
 	private static final String PLAYER_IN_PROGRESS_RESULTS_QUERY = //language=SQL
 		"SELECT player_id, base_result, result, probability, avg_draw_probability, no_draw_probability\n" +
@@ -196,11 +196,40 @@ public class TournamentForecastService {
 	private List<PlayerForecast> fetchPlayers(int inProgressEventId) {
 		List<PlayerForecast> players = new ArrayList<>();
 		var emptyCount = new AtomicInteger();
+		List<int[]> rrPairs = new ArrayList<>();
 		jdbcTemplate.query(IN_PROGRESS_MATCHES_QUERY, params("inProgressEventId", inProgressEventId), rs -> {
-			players.add(mapForecastPlayer(rs, "player1_", emptyCount));
-			players.add(mapForecastPlayer(rs, "player2_", emptyCount));
+			var player1 = mapForecastPlayer(rs, "player1_", emptyCount);
+			var player2 = mapForecastPlayer(rs, "player2_", emptyCount);
+			players.add(player1);
+			players.add(player2);
+			if ("RR".equals(rs.getString("round")))
+				rrPairs.add(new int[] {player1.getId(), player2.getId()});
 		});
-		return players;
+		return rrPairs.isEmpty() ? players : roundRobinPlayers(players, rrPairs);
+	}
+
+	/** Round-robin entry matches list each player several times: keep one entry per player, grouped (groups are the connected pairings) and ordered by seed. */
+	private static List<PlayerForecast> roundRobinPlayers(List<PlayerForecast> players, List<int[]> pairs) {
+		Map<Integer, Integer> parent = new HashMap<>();
+		for (var pair : pairs)
+			parent.put(rootOf(parent, pair[0]), rootOf(parent, pair[1]));
+		Map<Integer, PlayerForecast> unique = new LinkedHashMap<>();
+		for (var player : players)
+			unique.putIfAbsent(player.getId(), player);
+		Comparator<PlayerForecast> bySeed = Comparator.comparing(PlayerForecast::getSeed, Comparator.nullsLast(Comparator.naturalOrder()));
+		var groups = unique.values().stream().collect(groupingBy(player -> rootOf(parent, player.getId()), LinkedHashMap::new, toList()));
+		return groups.values().stream()
+			.map(group -> group.stream().sorted(bySeed).collect(toList()))
+			.sorted(Comparator.comparing(group -> group.get(0), bySeed))
+			.flatMap(List::stream)
+			.collect(toList());
+	}
+
+	private static int rootOf(Map<Integer, Integer> parent, int id) {
+		var root = id;
+		for (Integer next; (next = parent.get(root)) != null && next != root; )
+			root = next;
+		return root;
 	}
 
 	private void addForecast(InProgressEventForecast forecast, List<PlayerForecast> players, ResultSet rs) throws SQLException {
@@ -232,7 +261,7 @@ public class TournamentForecastService {
 			var nextSurfaceEloRating = getInteger(rs, prefix + "next_surface_elo_rating");
 			var nextInOutEloRating = getInteger(rs, prefix + "next_in_out_elo_rating");
 			var nextSetEloRating = getInteger(rs, prefix + "next_set_elo_rating");
-			if (currentForecast != null && KOResult.valueOf(round).compareTo(currentForecast.getEntryRound()) >= 0)
+			if (currentForecast != null && ("RR".equals(round) || KOResult.valueOf(round).compareTo(currentForecast.getEntryRound()) >= 0))
 				currentForecast.setNextEloRatings(playerId, nextEloRating, nextRecentEloRating, nextSurfaceEloRating, nextInOutEloRating, nextSetEloRating);
 			if (playersForecast != null)
 				playersForecast.setNextEloRatings(playerId, nextEloRating, nextRecentEloRating, nextSurfaceEloRating, nextInOutEloRating, nextSetEloRating);
@@ -255,6 +284,71 @@ public class TournamentForecastService {
 			getInteger(rs, prefix + "in_out_elo_rating"),
 			getInteger(rs, prefix + "set_elo_rating")
 		);
+	}
+
+
+	// Round-robin groups
+
+	private static final String ROUND_ROBIN_MATCHES_QUERY = //language=SQL
+		"SELECT date, player1_id, player2_id, winner, score FROM in_progress_match\n" +
+		"WHERE in_progress_event_id = :inProgressEventId AND round = 'RR' AND player1_id IS NOT NULL AND player2_id IS NOT NULL\n" +
+		"ORDER BY date, match_num";
+
+	private static final String ROUND_ROBIN_H2H_QUERY = //language=SQL
+		"SELECT winner_id, loser_id, count(match_id) AS won FROM match_for_rivalry_v\n" +
+		"WHERE winner_id IN (:playerIds) AND loser_id IN (:playerIds)\n" +
+		"GROUP BY winner_id, loser_id";
+
+	private static final class Row {
+		final LocalDate date; final int playerId1, playerId2; final Integer winner; final String score;
+		Row(LocalDate date, int playerId1, int playerId2, Integer winner, String score) {
+			this.date = date; this.playerId1 = playerId1; this.playerId2 = playerId2; this.winner = winner; this.score = score;
+		}
+	}
+
+	/** Groups of a round-robin event with each group's players forecast and every group match predicted (or its result). */
+	@Cacheable("InProgressEventRoundRobinGroups")
+	public List<RoundRobinGroup> getRoundRobinGroups(int inProgressEventId) {
+		var forecast = self.getInProgressEventForecast(inProgressEventId);
+		var event = forecast.getEvent();
+		var current = forecast.getCurrentForecast();
+		if (!event.isRoundRobin() || current == null || forecast.getBaseResults().isEmpty())
+			return emptyList();
+		var entry = forecast.getEntryForecast();
+		var rows = jdbcTemplate.query(ROUND_ROBIN_MATCHES_QUERY, params("inProgressEventId", inProgressEventId), (rs, rowNum) -> new Row(
+			getLocalDate(rs, "date"), rs.getInt("player1_id"), rs.getInt("player2_id"), getInteger(rs, "winner"), rs.getString("score")
+		));
+		Map<Integer, Integer> parent = new HashMap<>();
+		for (var row : rows)
+			parent.put(rootOf(parent, row.playerId1), rootOf(parent, row.playerId2));
+		Map<Integer, RoundRobinGroup> groups = new LinkedHashMap<>();
+		for (var player : entry.getPlayerForecasts()) {
+			var group = groups.computeIfAbsent(rootOf(parent, player.getId()), root -> new RoundRobinGroup("Group " + (char)('A' + groups.size())));
+			group.addEntry(player, current.getPlayerForecast(player.getId()));
+		}
+		Set<Integer> playerIds = new HashSet<>();
+		for (var row : rows) {
+			playerIds.add(row.playerId1);
+			playerIds.add(row.playerId2);
+		}
+		Map<String, Integer> h2hWon = new HashMap<>();
+		if (!playerIds.isEmpty()) {
+			jdbcTemplate.query(ROUND_ROBIN_H2H_QUERY, params("playerIds", playerIds), rs -> {
+				h2hWon.put(rs.getInt("winner_id") + "-" + rs.getInt("loser_id"), rs.getInt("won"));
+			});
+		}
+		var today = LocalDate.now();
+		for (var row : rows) {
+			var group = groups.get(rootOf(parent, row.playerId1));
+			var player1 = entry.getPlayerForecast(row.playerId1);
+			var player2 = entry.getPlayerForecast(row.playerId2);
+			if (group == null || player1 == null || player2 == null)
+				continue;
+			var probability1 = row.winner == null ? predictMatch(row.playerId1, row.playerId2, event, today, "RR").getWinProbability1() : null;
+			group.addMatch(new RoundRobinMatch(row.date, player1, player2, probability1, row.winner, row.score,
+				h2hWon.getOrDefault(row.playerId1 + "-" + row.playerId2, 0), h2hWon.getOrDefault(row.playerId2 + "-" + row.playerId1, 0)));
+		}
+		return new ArrayList<>(groups.values());
 	}
 
 
@@ -309,6 +403,8 @@ public class TournamentForecastService {
 		var forecast = fetchInProgressEventForecast(event, CURRENT_CONDITION);
 
 		var current = forecast.getCurrentForecast();
+		if (event.isRoundRobin()) // probable matchups follow the knockout bracket
+			return new ProbableMatches(event, new TournamentEventResults(), current.getKnownPlayers());
 		var probableMatches = new TournamentEventResults();
 		var matchId = new AtomicInteger();
 		var matchNum = new AtomicInteger();
@@ -404,7 +500,7 @@ public class TournamentForecastService {
 			if (playerForecast != null)
 				player = playerForecast;
 			var optionalIndex = current.findIndex(playerId);
-			if (playerForecast != null && playerForecast.getRawProbability(current.getFirstResult()) > 0.0 && optionalIndex.isPresent()) {
+			if (!forecast.getEvent().isRoundRobin() && playerForecast != null && playerForecast.getRawProbability(current.getFirstResult()) > 0.0 && optionalIndex.isPresent()) {
 				int index = optionalIndex.get();
 				var matchId = new AtomicInteger(1000);
 				var matchNum = new AtomicInteger(1000);

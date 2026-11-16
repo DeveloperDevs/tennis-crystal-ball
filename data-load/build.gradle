@@ -8,7 +8,7 @@ applicationDefaultJvmArgs = [
 	'-Xmx256m',
 	'-Dtcb.db.url=jdbc:postgresql://localhost:5432/tcb',
 	'-Dtcb.db.connections=1',
-	'-Dtcb.data.base-dir=/tcb/tennis_atp',
+	"-Dtcb.data.base-dir=${System.getenv('TCB_DATA_DIR') ?: "${rootDir}/ultimate-tennis-stats-data/merged"}",
 	'-Dwebdriver.gecko.driver=/tcb/geckodriver/geckodriver'
 ]
 

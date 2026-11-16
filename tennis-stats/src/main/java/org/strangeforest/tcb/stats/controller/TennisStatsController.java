@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.*;
 import org.strangeforest.tcb.stats.model.*;
 import org.strangeforest.tcb.stats.model.core.*;
+import org.strangeforest.tcb.stats.model.forecast.*;
 import org.strangeforest.tcb.stats.model.records.*;
 import org.strangeforest.tcb.stats.service.*;
 import org.strangeforest.tcb.stats.util.*;
@@ -31,11 +32,18 @@ public class TennisStatsController extends PageController {
 	@Autowired private RankingsService rankingsService;
 	@Autowired private ContentService contentService;
 
+	/** Most important first; the home page features the forecast of the biggest in-progress event (ties: draw strength). Unknown levels: -1 & MAX_VALUE sorts last. */
+	private static final List<String> FEATURED_LEVELS = List.of("G", "F", "L", "M", "O", "A", "B");
 	private static final String FORECAST_ORDER_BY = Stream.of(InProgressEventsResource.DEFAULT_ORDER).map(OrderBy::toString).collect(joining(", "));
 
 	@GetMapping("/")
 	public ModelAndView index() {
-		var hasInProgressEvents = forecastService.getInProgressEventsTable(InProgressEventFilter.ALL_IN_PROGRESS, null, FORECAST_ORDER_BY, 20, 1).getTotal() > 0;
+		var inProgressEvents = forecastService.getInProgressEventsTable(InProgressEventFilter.ALL_IN_PROGRESS, null, FORECAST_ORDER_BY, 20, 1);
+		var hasInProgressEvents = inProgressEvents.getTotal() > 0;
+		var featuredForecast = inProgressEvents.getRows().stream()
+			.min(Comparator.comparingInt((InProgressEvent event) -> FEATURED_LEVELS.indexOf(event.getLevel()) & Integer.MAX_VALUE).thenComparing(InProgressEvent::getStrength, Comparator.reverseOrder()))
+			.map(event -> forecastService.getInProgressEventForecast(event.getId()))
+			.orElse(null);
 		var playerOfTheWeek = contentService.getPlayerOfTheWeek();
 		var recordOfTheDay = contentService.getRecordOfTheDay();
 		var featuredBlogPost = contentService.getFeaturedBlogPost();
@@ -44,6 +52,15 @@ public class TennisStatsController extends PageController {
 
 		var modelMap = new ModelMap();
 		modelMap.addAttribute("hasInProgressEvents", hasInProgressEvents);
+		if (featuredForecast != null && featuredForecast.getCurrentForecast() != null) {
+			modelMap.addAttribute("featuredForecast", featuredForecast);
+			if (featuredForecast.getEvent().isRoundRobin())
+				modelMap.addAttribute("featuredGroups", forecastService.getRoundRobinGroups(featuredForecast.getEvent().getId()));
+			modelMap.addAttribute("featuredPlayers", featuredForecast.getCurrentForecast().getPlayerForecasts().stream()
+				.filter(PlayerForecast::isKnown).sorted(Comparator.comparingDouble((PlayerForecast player) -> player.getRawProbability("W")).reversed()
+				.thenComparing(player -> player.getRawProbability("F"), Comparator.reverseOrder()))
+				.limit(8).collect(toList()));
+		}
 		modelMap.addAttribute("currentSeason", dataService.getLastSeason());
 		modelMap.addAttribute("playerOfTheWeek", playerOfTheWeek);
 		if (playerOfTheWeek.hasTitle()) {

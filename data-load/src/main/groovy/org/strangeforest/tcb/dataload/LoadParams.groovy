@@ -9,6 +9,8 @@ class LoadParams {
 	static final String RECORD_PAUSE_PROPERTY = 'tcb.data.record-pause'
 	static final String FORCE_FORECAST_PROPERTY = 'tcb.data.force-forecast'
 	static final String THREADS_PROPERTY = 'tcb.data.threads'
+	static final String LAST_SEASON_PROPERTY = 'tcb.data.last-season'
+	static final String SCRAPE_PROPERTY = 'tcb.data.scrape'
 
 	static final boolean FULL_LOAD_DEFAULT = true
 	static final boolean VERBOSE_DEFAULT = false

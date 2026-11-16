@@ -134,7 +134,7 @@
 		$("#statsOpponent").val("");
 		$("#statsCountry").val("");
 		$("#statsMinEntriesOverride").val("");
-		$("#statsActive").prop("checked", false);
+		$("#statsActive").prop("checked", $("#statsActive").data("default") === true);
 		$("#statsLeadersTable").bootgrid("search", "");
 		reloadStatsLeaders();
 	}
@@ -249,7 +249,7 @@
 <div id="statsActiveDiv" class="btn-group margin-right">
 	<div class="checkbox">
 		<label data-toggle="tooltip" data-placement="top" title="Show only active players">
-			<input id="statsActive" type="checkbox" onchange="reloadStatsLeaders()"/> Active
+			<input id="statsActive" type="checkbox" th:checked="${@uiDefaults.activePlayersByDefault}" th:data-default="${@uiDefaults.activePlayersByDefault}" onchange="reloadStatsLeaders()"/> Active
 		</label>
 	</div>
 </div>

@@ -172,7 +172,7 @@
 			$("#tournament").val("");
 			$("#country").val("");
 			$("#minEntriesOverride").val("");
-			$("#active").prop("checked", false);
+			$("#active").prop("checked", $("#active").data("default") === true);
 			$("#topPerformersTable").bootgrid("search", "");
 			reloadTopPerformers();
 		}
@@ -181,7 +181,6 @@
 </head>
 <body class="container">
 	<header th:include="fragments/header :: title"></header>
-	<th:block th:include="fragments/ads :: responsive"/>
 	<div class="row margin-top">
 		<div class="col-md-8">
 			<h3 class="text-nowrap" style="display: inline"><i class="fa fa-tasks"></i> Top Performers</h3>
@@ -304,7 +303,7 @@
 	<div id="activeDiv" class="btn-group margin-right">
 		<div class="checkbox">
 			<label data-toggle="tooltip" data-placement="top" title="Show only active players">
-				<input id="active" type="checkbox" onchange="reloadTopPerformers()"/> Active
+				<input id="active" type="checkbox" th:checked="${@uiDefaults.activePlayersByDefault}" th:data-default="${@uiDefaults.activePlayersByDefault}" onchange="reloadTopPerformers()"/> Active
 			</label>
 		</div>
 	</div>

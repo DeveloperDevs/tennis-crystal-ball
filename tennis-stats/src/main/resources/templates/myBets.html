@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!--/*@thymesVar id="wagers" type="java.util.List<org.strangeforest.tcb.stats.model.Wager>"*/-->
+<!--/*@thymesVar id="summary" type="org.strangeforest.tcb.stats.service.MyBetsSummary"*/-->
+<!--/*@thymesVar id="betTypes" type="java.util.List<java.lang.String>"*/-->
+<head th:replace="fragments/head :: commonHead(~{::title/text()}, false, ~{::template})">
+	<title>My Bets</title>
+	<template>
+	<meta name="description" content="My tennis bets and their results"/>
+	<script type="text/javascript">
+		var myBetsEditor = false;
+
+		function setEditor(editor) {
+			myBetsEditor = editor;
+			$(".bets-editor").toggle(editor);
+			$(".bets-viewer").toggle(!editor);
+			updateParlaySelection();
+		}
+
+		function myBetsLogin() {
+			$.ajax({url: "/myBets/login", cache: false})
+				.done(function() { setEditor(true); })
+				.fail(function() { alert("Login failed."); });
+		}
+
+		function money(value) {
+			var v = Number(value) || 0;
+			return (v < 0 ? "-$" : "$") + Math.abs(v).toFixed(2);
+		}
+
+		function toWin(odds, stake) {
+			odds = Number(odds); stake = Number(stake);
+			if (!stake || !(odds >= 100 || odds <= -100))
+				return null;
+			return odds > 0 ? stake * odds / 100 : stake * 100 / -odds;
+		}
+
+		function impliedPct(odds) {
+			odds = Number(odds);
+			if (!(odds >= 100 || odds <= -100))
+				return null;
+			return 100 * (odds > 0 ? 100 / (odds + 100) : -odds / (-odds + 100));
+		}
+
+		function updateBetPreview() {
+			var odds = $("#betOdds").val(), stake = $("#betStake").val();
+			var win = toWin(odds, stake), implied = impliedPct(odds);
+			$("#betPreview").text(win != null ? "To win " + money(win) + " (payout " + money(win + Number(stake)) + ") · implied " + implied.toFixed(1) + "%" : "");
+		}
+
+		function updateBetTypeFields() {
+			var matchWinner = $("#betType").val() === "Match Winner";
+			$("#betSelectionHelp").text(matchWinner ? "Optional, e.g. 'Alcaraz -1.5 sets'. Leave empty for a straight match winner." : "Describe the bet, e.g. 'Over 22.5 games' or 'Sinner to win the title'.");
+		}
+
+		function playerField(id) {
+			var $name = $("#" + id + "Name"), $id = $("#" + id + "Id");
+			$name.autocomplete({
+				source: "/autocompletePlayer",
+				minLength: 2,
+				select: function(event, ui) {
+					if (ui.item)
+						$id.val(ui.item.id);
+				}
+			}).on("input", function() { $id.val(""); });
+		}
+
+		function editBet(row) {
+			var $row = row ? $(row).closest("tr") : null;
+			var d = $row ? $row.data() : {};
+			$("#betModalTitle").text($row ? "Edit Bet" : "Add Bet");
+			$("#betId").val(d.id || "");
+			$("#betPlaced").val(d.placed || new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().substring(0, 10));
+			$("#betTournament").val(d.tournament || "");
+			$("#betType").val(d.type || "Match Winner");
+			$("#betPlayerId").val(d.playerId || "");
+			$("#betPlayerName").val(d.playerName || "");
+			$("#betOpponentId").val(d.opponentId || "");
+			$("#betOpponentName").val(d.opponentName || "");
+			$("#betSelection").val(d.selection || "");
+			$("#betOdds").val(d.odds != null ? d.odds : "");
+			$("#betStake").val(d.stake != null ? d.stake : "");
+			$("#betResult").val(d.result || "PENDING");
+			$("#betNotes").val(d.notes || "");
+			$("#betError").hide();
+			var leg = !!(d.parlayId);
+			$("#betStake").closest(".form-group").toggle(!leg);
+			if (leg)
+				$("#betModalTitle").text("Edit Parlay Leg");
+			updateBetTypeFields();
+			updateBetPreview();
+			$("#betModal").modal("show");
+			return false;
+		}
+
+		function saveBet() {
+			var bet = {
+				id: $("#betId").val() ? Number($("#betId").val()) : null,
+				placed: $("#betPlaced").val(),
+				tournament: $("#betTournament").val(),
+				betType: $("#betType").val(),
+				playerId: $("#betPlayerId").val() ? Number($("#betPlayerId").val()) : null,
+				opponentId: $("#betOpponentId").val() ? Number($("#betOpponentId").val()) : null,
+				selection: $("#betSelection").val(),
+				odds: Number(String($("#betOdds").val()).replace("+", "")),
+				stake: $("#betStake").val() ? Number($("#betStake").val()) : null,
+				result: $("#betResult").val(),
+				notes: $("#betNotes").val()
+			};
+			if ($("#betPlayerName").val() && !bet.playerId) {
+				showBetError("Pick the player from the suggestions list.");
+				return;
+			}
+			if ($("#betOpponentName").val() && !bet.opponentId) {
+				showBetError("Pick the opponent from the suggestions list.");
+				return;
+			}
+			$.ajax({url: "/myBets/save", method: "POST", contentType: "application/json", data: JSON.stringify(bet)})
+				.done(function() { window.location.reload(); })
+				.fail(function(xhr) {
+					showBetError(xhr.status === 401 ? "Not logged in." : (xhr.responseJSON && xhr.responseJSON.error) || "Could not save the bet.");
+				});
+		}
+
+		function showBetError(message) {
+			$("#betError").text(message).show();
+		}
+
+		function deleteBet(row) {
+			var id = $(row).closest("tr").data("id");
+			if (!confirm("Delete this bet?"))
+				return false;
+			$.post("/myBets/delete", {betId: id})
+				.done(function() { window.location.reload(); })
+				.fail(function() { alert("Could not delete the bet."); });
+			return false;
+		}
+
+		// Parlays
+
+		function americanToDecimal(odds) {
+			odds = Number(odds);
+			return odds > 0 ? 1 + odds / 100 : 1 + 100 / -odds;
+		}
+
+		function decimalToAmerican(decimal) {
+			return Math.round(decimal >= 2 ? (decimal - 1) * 100 : -100 / (decimal - 1));
+		}
+
+		function oddsText(odds) {
+			return odds > 0 ? "+" + odds : String(odds);
+		}
+
+		function legText($row) {
+			var d = $row.data();
+			var pick = d.playerName ? d.playerName + (d.opponentName ? " vs " + d.opponentName : "") : "";
+			if (d.selection)
+				pick = pick ? pick + " (" + d.selection + ")" : d.selection;
+			return pick + " " + oddsText(d.odds);
+		}
+
+		function selectedBetRows() {
+			return $("#betsTable input.bets-select:checked").closest("tr");
+		}
+
+		function updateParlaySelection() {
+			var n = myBetsEditor ? selectedBetRows().length : 0;
+			$("#makeParlay").toggle(n >= 2).html("<i class='fa fa-link'></i> Make Parlay (" + n + ")");
+		}
+
+		function showParlayModal(title, legRows, data) {
+			$("#parlayModalTitle").text(title);
+			$("#parlayLegs").empty();
+			legRows.each(function() { $("<li/>").text(legText($(this))).appendTo("#parlayLegs"); });
+			$("#parlayId").val(data.id || "");
+			$("#parlayPlaced").val(data.placed);
+			$("#parlayOdds").val(oddsText(data.odds));
+			$("#parlayStake").val(data.stake);
+			$("#parlayNotes").val(data.notes || "");
+			$("#parlayError").hide();
+			$("#parlayModal").data("betIds", legRows.map(function() { return $(this).data("id"); }).get());
+			updateParlayPreview();
+			$("#parlayModal").modal("show");
+		}
+
+		function makeParlay() {
+			var $rows = selectedBetRows();
+			var decimal = 1, placed = "", stake = null;
+			$rows.each(function() {
+				var d = $(this).data();
+				decimal *= americanToDecimal(d.odds);
+				if (String(d.placed) > placed)
+					placed = String(d.placed);
+				if (stake == null)
+					stake = d.stake;
+			});
+			showParlayModal("Make Parlay", $rows, {placed: placed, odds: decimalToAmerican(decimal), stake: stake});
+		}
+
+		function editParlay(link) {
+			var $body = $(link).closest("tbody"), d = $body.data();
+			showParlayModal("Edit Parlay", $body.find("tr.bets-leg"), {id: d.parlayId, placed: d.placed, odds: d.odds, stake: d.stake, notes: d.notes});
+			return false;
+		}
+
+		function updateParlayPreview() {
+			var odds = String($("#parlayOdds").val()).replace("+", ""), stake = $("#parlayStake").val();
+			var win = toWin(odds, stake), implied = impliedPct(odds);
+			$("#parlayPreview").text(win != null ? "To win " + money(win) + " (payout " + money(win + Number(stake)) + ") · implied " + implied.toFixed(1) + "%" : "");
+		}
+
+		function saveParlay() {
+			var parlay = {
+				id: $("#parlayId").val() ? Number($("#parlayId").val()) : null,
+				betIds: $("#parlayModal").data("betIds"),
+				placed: $("#parlayPlaced").val(),
+				odds: Number(String($("#parlayOdds").val()).replace("+", "")),
+				stake: $("#parlayStake").val() ? Number($("#parlayStake").val()) : null,
+				notes: $("#parlayNotes").val()
+			};
+			$.ajax({url: "/myBets/parlay/save", method: "POST", contentType: "application/json", data: JSON.stringify(parlay)})
+				.done(function() { window.location.reload(); })
+				.fail(function(xhr) {
+					$("#parlayError").text(xhr.status === 401 ? "Not logged in." : (xhr.responseJSON && xhr.responseJSON.error) || "Could not save the parlay.").show();
+				});
+		}
+
+		function ungroupParlay(link) {
+			if (!confirm("Ungroup this parlay back into single bets?"))
+				return false;
+			$.post("/myBets/parlay/ungroup", {parlayId: $(link).closest("tbody").data("parlayId")})
+				.done(function() { window.location.reload(); })
+				.fail(function() { alert("Could not ungroup the parlay."); });
+			return false;
+		}
+
+		function deleteParlay(link) {
+			if (!confirm("Delete this parlay and all its legs?"))
+				return false;
+			$.post("/myBets/parlay/delete", {parlayId: $(link).closest("tbody").data("parlayId")})
+				.done(function() { window.location.reload(); })
+				.fail(function() { alert("Could not delete the parlay."); });
+			return false;
+		}
+
+		// Results refresh
+
+		var refreshPoll = null;
+
+		function timeText(iso) {
+			var d = new Date(iso);
+			return isNaN(d) ? "" : d.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+		}
+
+		function showRefreshStatus(status) {
+			var $button = $("#refreshResults"), $text = $("#refreshStatus");
+			if (status.running) {
+				$button.prop("disabled", true).html("<i class='fa fa-refresh fa-spin'></i> Refreshing...");
+				$text.text("Checking ESPN for results...");
+			}
+			else {
+				$button.prop("disabled", false).html("<i class='fa fa-refresh'></i> Refresh");
+				$text.text(status.finished ? "Results checked " + timeText(status.finished) + (status.ok === false ? " (partly failed)" : "") : "");
+			}
+		}
+
+		function pollRefresh(reloadWhenDone) {
+			$.getJSON("/myBets/refresh/status", {_: Date.now()}, function(status) {
+				showRefreshStatus(status);
+				if (status.running)
+					refreshPoll = setTimeout(function() { pollRefresh(reloadWhenDone); }, 2000);
+				else if (reloadWhenDone)
+					window.location.reload();
+			});
+		}
+
+		function refreshResults() {
+			$.post("/myBets/refresh")
+				.done(function(status) {
+					showRefreshStatus({running: true});
+					pollRefresh(true);
+				})
+				.fail(function(xhr) { alert(xhr.status === 401 ? "Log in to refresh." : "Could not start the refresh."); });
+		}
+
+		$(function() {
+			setEditor(false);
+			pollRefresh(false);
+			$("#parlayOdds, #parlayStake").on("input", updateParlayPreview);
+			$.getJSON("/myBets/status", {_: Date.now()}, function(status) { setEditor(status.editor); });
+			$("#betTournament").autocomplete({
+				source: "/myBets/events",
+				minLength: 0,
+				appendTo: "#betModal"
+			}).on("focus", function() { if (!this.value) $(this).autocomplete("search", ""); });
+			playerField("betPlayer");
+			playerField("betOpponent");
+			$("#betOdds, #betStake").on("input", updateBetPreview);
+			$("#betType").on("change", updateBetTypeFields);
+			$("#betPlayerName, #betOpponentName").autocomplete("option", "appendTo", "#betModal");
+			$("[data-toggle='tooltip']").tooltip();
+		});
+	</script>
+	<style type="text/css">
+		.mb {
+			--mb-text: #333; --mb-muted: #777; --mb-line: #ddd; --mb-tile: #f9f9f9; --mb-blue: #337ab7; --mb-green: #5cb85c; --mb-orange: #f0ad4e; --mb-red: #d9534f;
+			--mb-accent: royalblue;
+		}
+		.mb-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+		.mb-head h3 { margin-top: 20px; }
+		.mb-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+		.mb-actions #refreshStatus { color: var(--mb-muted); font-size: 12px; }
+
+		.mb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 6px 0 4px; }
+		.mb-tile { display: flex; flex-direction: column; background: #fff; border: 1px solid var(--mb-line); border-left: 4px solid var(--mb-blue); border-radius: 4px; padding: 7px 12px 8px; }
+		.mb-tile.mb-tile-gold { border-left-color: var(--mb-orange); }
+		.mb .bets-value { font-size: 22px; font-weight: bold; line-height: 1.2; white-space: nowrap; }
+		.mb .bets-label { color: var(--mb-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; order: -1; }
+		.bets-plus { color: #3c763d !important; }
+		.bets-minus { color: #a94442 !important; }
+
+		.mb-section { font-size: 18px; font-weight: 500; margin: 22px 0 6px; padding-bottom: 6px; border-bottom: 1px solid #eee; }
+		.mb-section small { font-size: 12px; color: var(--mb-muted); margin-left: 8px; }
+
+		/* Player points: featured player + strip */
+		.mb-show { position: relative; display: grid; grid-template-columns: minmax(0, 440px) minmax(0, 1fr); min-height: 380px; overflow: hidden;
+			border: 1px solid var(--mb-line); border-radius: 4px; background: linear-gradient(115deg, #fff 0%, #f7f9fc 55%, #eaf1fa 100%); }
+		.mb-show:before { content: ""; position: absolute; inset: 0; pointer-events: none;
+			background: linear-gradient(105deg, transparent 52%, rgba(51,122,183,0.05) 52%, rgba(51,122,183,0.05) 60%, transparent 60%, transparent 66%, rgba(51,122,183,0.04) 66%, rgba(51,122,183,0.04) 70%, transparent 70%); }
+		.mb-info { position: relative; z-index: 2; padding: 22px 26px; }
+		.mb-name-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+		.mb-name { font-size: 36px; font-weight: bold; line-height: 1.05; margin: 0; color: #333; }
+		.mb-ring { flex: none; width: 74px; height: 74px; border-radius: 50%; border: 4px solid var(--mb-blue); background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+		.mb-ring span { color: var(--mb-muted); font-size: 10px; letter-spacing: 1px; }
+		.mb-ring strong { font-size: 26px; line-height: 1; color: var(--mb-blue); }
+		.mb-ring.mb-ring-1 { border-color: var(--mb-orange); } .mb-ring.mb-ring-1 strong { color: #ec971f; }
+		.mb-meta { color: #555; margin: 12px 0 14px; font-size: 14px; }
+		.mb-meta img { vertical-align: -4px; margin-right: 4px; }
+		.mb-bar { display: grid; grid-template-columns: 64px minmax(0, 1fr) 56px; align-items: center; gap: 12px; margin-bottom: 8px; }
+		.mb-bar > span { color: var(--mb-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+		.mb-bar > div { height: 8px; background: #eee; border-radius: 4px; overflow: hidden; }
+		.mb-bar > div > i { display: block; height: 100%; border-radius: 4px; transition: width 0.4s; }
+		.mb-bar > strong { font-size: 18px; line-height: 1; }
+		.mb-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 14px 0 10px; }
+		.mb-stats > div { background: #fff; border: 1px solid var(--mb-line); border-left: 3px solid var(--mb-blue); border-radius: 3px; padding: 5px 10px 6px; }
+		.mb-stats > div > span { display: block; color: var(--mb-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+		.mb-stats strong { font-size: 20px; line-height: 1.2; white-space: nowrap; }
+		.mb-stats strong span { font: inherit; }
+		.mb-foot { color: var(--mb-muted); font-size: 13px; margin-bottom: 14px; }
+		.mb-photo { position: relative; overflow: hidden; }
+		.mb-photo .mb-mark { position: absolute; right: -10px; top: 50%; transform: translateY(-50%) rotate(-8deg); font-weight: bold; font-size: 130px;
+			line-height: 0.85; text-transform: uppercase; text-align: right; color: transparent; -webkit-text-stroke: 2px rgba(51,122,183,0.12); white-space: nowrap; z-index: 0; }
+		.mb-photo img { position: absolute; right: 6%; bottom: 0; height: 100%; max-width: 88%; object-fit: cover; object-position: center 18%; z-index: 1;
+			-webkit-mask-image: linear-gradient(to right, transparent 0%, #000 22%, #000 80%, transparent 100%); mask-image: linear-gradient(to right, transparent 0%, #000 22%, #000 80%, transparent 100%); }
+		.mb-initials { position: absolute; right: 12%; top: 50%; transform: translateY(-50%); width: 200px; height: 200px; border-radius: 50%; z-index: 1;
+			display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 80px; color: #fff;
+			background: radial-gradient(circle at 30% 30%, #5b9bd5, var(--mb-blue)); box-shadow: 0 6px 24px rgba(51,122,183,0.3); }
+
+		.mb-strip-wrap { display: flex; align-items: stretch; gap: 8px; margin-top: 10px; }
+		.mb-arrow { flex: none; width: 36px; border: 1px solid #ccc; background: #fff; color: #333; border-radius: 4px; }
+		.mb-arrow:hover { background: #e6e6e6; }
+		.mb-strip { flex: 1; display: flex; gap: 8px; overflow-x: auto; padding: 8px 4px 10px; scrollbar-width: thin; }
+		.mb-card { flex: none; width: 116px; position: relative; cursor: pointer; background: #fff; border: 1px solid var(--mb-line); border-radius: 4px; padding: 0; color: #333;
+			transition: transform 0.15s, box-shadow 0.15s; overflow: hidden; text-align: left; }
+		.mb-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+		.mb-card.active { border-color: var(--mb-blue); transform: translateY(-5px); box-shadow: 0 3px 0 var(--mb-blue), 0 4px 12px rgba(51,122,183,0.25); }
+		.mb-card-rank { position: absolute; top: 5px; left: 5px; z-index: 2; font-size: 12px; font-weight: bold; color: #fff; background: var(--mb-blue); border-radius: 3px; padding: 1px 6px; }
+		.mb-card.active .mb-card-rank, .mb-card:first-child .mb-card-rank { background: var(--mb-orange); }
+		.mb-card-img { height: 110px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #eef3f9; }
+		.mb-card-img img { width: 100%; height: 100%; object-fit: cover; object-position: center 18%; }
+		.mb-card-img .mb-card-init { font-weight: bold; font-size: 38px; color: #a9c4e0; }
+		.mb-card-name { padding: 5px 8px 6px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid #eee; }
+		.mb-card.active .mb-card-name { color: var(--mb-blue); font-weight: bold; }
+
+		/* Bets table */
+		#betsTable td { vertical-align: middle; }
+		#betsTable .label { display: inline-block; min-width: 58px; }
+		#betsTable > tbody { border-top: 1px solid #ddd; }
+		#betsTable > tbody > tr > td { border-top: none; }
+		#betsTable > tbody.bets-single:nth-of-type(odd) { background-color: #f9f9f9; }
+		tbody.bets-parlay { border-left: 4px solid #337ab7; }
+		tbody.bets-parlay tr.bets-parlay-head { background-color: #eef4fa; }
+		tbody.bets-parlay tr.bets-leg { background-color: #fafcfe; font-size: 13px; }
+		tbody.bets-parlay tr.bets-leg td.bets-leg-date { padding-left: 22px; }
+		tbody.bets-parlay tr.bets-leg td.bets-leg-date:before { content: "\21B3"; color: #aaa; margin-left: -14px; margin-right: 4px; }
+		#betsTable .label.bets-leg-result { min-width: 0; font-size: 70%; opacity: 0.85; }
+		.mb-pts { display: block; font-size: 11px; font-weight: bold; color: #ec971f; margin-top: 2px; }
+		.bets-vs { color: #888; font-size: 12px; }
+		.bets-notes { color: #888; font-size: 12px; display: block; white-space: normal; }
+		.bets-check { width: 24px; }
+		.ui-autocomplete { z-index: 1100 !important; }
+		#parlayLegs { margin-bottom: 10px; }
+		#parlayLegs li { margin-bottom: 2px; }
+
+		@media (max-width: 767px) {
+			.mb-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+			.mb .bets-value { font-size: 20px; }
+			.mb-section small { display: block; margin: 2px 0 0; }
+			.mb-show { grid-template-columns: minmax(0, 1fr); }
+			.mb-photo { order: -1; height: 220px; }
+			.mb-photo .mb-mark { font-size: 80px; }
+			.mb-photo img { right: 50%; transform: translateX(50%); max-width: 100%; }
+			.mb-initials { right: 50%; transform: translate(50%, -50%); width: 150px; height: 150px; font-size: 60px; }
+			.mb-info { padding: 14px 14px 16px; }
+			.mb-name { font-size: 28px; }
+			.mb-ring { width: 60px; height: 60px; } .mb-ring strong { font-size: 22px; }
+			.mb-stats strong { font-size: 17px; }
+			.mb-stats > div { padding: 5px 7px; }
+			.mb-arrow { display: none; }
+		}
+	</style>
+	</template>
+</head>
+<body class="container">
+	<header th:include="fragments/header :: title"></header>
+	<div class="mb">
+	<div class="mb-head">
+		<h3><i class="fa fa-money"></i> My Bets</h3>
+		<div class="mb-actions">
+			<span id="refreshStatus"></span>
+			<button type="button" id="refreshResults" class="btn btn-default bets-editor" style="display: none" onclick="refreshResults()" title="Pull the latest results from ESPN now and settle bets (also runs every 30 minutes)"><span><i class="fa fa-refresh"></i> Refresh</span></button>
+			<button type="button" id="makeParlay" class="btn btn-default" style="display: none" onclick="makeParlay()"><span><i class="fa fa-link"></i> Make Parlay</span></button>
+			<button type="button" class="btn btn-primary bets-editor" style="display: none" onclick="editBet(null)"><span><i class="fa fa-plus"></i> Add Bet</span></button>
+			<button type="button" class="btn btn-default bets-viewer" onclick="myBetsLogin()" title="Log in to add or edit bets"><span><i class="fa fa-lock"></i> Log in to edit</span></button>
+		</div>
+	</div>
+
+	<div class="mb-tiles">
+		<div class="mb-tile">
+			<div class="bets-value"><span th:text="${summary.won}">0</span>-<span th:text="${summary.lost}">0</span></div>
+			<div class="bets-label" th:title="${summary.voided + ' void, ' + summary.pending + ' pending'}">Record (W-L)</div>
+		</div>
+		<div class="mb-tile">
+			<div class="bets-value" th:text="${summary.winPct != null ? #numbers.formatDecimal(summary.winPct, 1, 1) + '%' : '–'}">–</div>
+			<div class="bets-label">Win %</div>
+		</div>
+		<div class="mb-tile">
+			<div class="bets-value" th:classappend="${summary.profit.signum() > 0 ? 'bets-plus' : (summary.profit.signum() < 0 ? 'bets-minus' : _)}" th:text="${(summary.profit.signum() < 0 ? '-$' : (summary.profit.signum() > 0 ? '+$' : '$')) + #numbers.formatDecimal(summary.profit.abs(), 1, 'COMMA', 2, 'POINT')}">$0.00</div>
+			<div class="bets-label">Profit</div>
+		</div>
+		<div class="mb-tile">
+			<div class="bets-value" th:classappend="${summary.roi != null && summary.roi > 0 ? 'bets-plus' : (summary.roi != null && summary.roi < 0 ? 'bets-minus' : _)}" th:text="${summary.roi != null ? (summary.roi > 0 ? '+' : '') + #numbers.formatDecimal(summary.roi, 1, 1) + '%' : '–'}">–</div>
+			<div class="bets-label" title="Profit as % of the amount staked on settled bets">ROI</div>
+		</div>
+		<div class="mb-tile">
+			<div class="bets-value" th:text="${'$' + #numbers.formatDecimal(summary.staked, 1, 'COMMA', 2, 'POINT')}">$0.00</div>
+			<div class="bets-label">Staked (settled)</div>
+		</div>
+		<div class="mb-tile">
+			<div class="bets-value" th:text="${'$' + #numbers.formatDecimal(summary.pendingStake, 1, 'COMMA', 2, 'POINT')}">$0.00</div>
+			<div class="bets-label" th:text="${'At risk (' + summary.pending + ' pending)'}" th:title="${'Pending bets would win $' + #numbers.formatDecimal(summary.pendingToWin, 1, 'COMMA', 2, 'POINT')}">At risk (0 pending)</div>
+		</div>
+		<div class="mb-tile mb-tile-gold">
+			<div class="bets-value" style="color: #ec971f" th:text="${#numbers.formatDecimal(#aggregates.sum(playerPoints.![points]) ?: 0, 1, 1)}">0.0</div>
+			<div class="bets-label" th:text="${'Points (' + playerPoints.size() + ' players)'}">Points</div>
+		</div>
+	</div>
+
+	<th:block th:unless="${playerPoints.isEmpty()}">
+	<div class="mb-section"><i class="fa fa-star text-warning"></i> Player Points
+	</div>
+	<div class="mb-show" id="mbShow">
+		<div class="mb-info">
+			<div class="mb-name-row">
+				<h2 class="mb-name" id="mbName"></h2>
+				<div class="mb-ring" id="mbRing"><span>RANK</span><strong id="mbRank"></strong></div>
+			</div>
+			<div class="mb-meta" id="mbMeta"></div>
+			<div class="mb-bar"><span>Points</span><div><i id="mbPointsBar" style="background: var(--mb-blue)"></i></div><strong id="mbPoints"></strong></div>
+			<div class="mb-bar"><span>Win %</span><div><i id="mbWinBar" style="background: var(--mb-green)"></i></div><strong id="mbWinPct"></strong></div>
+			<div class="mb-stats" id="mbStats"></div>
+			<div class="mb-foot" id="mbFoot"></div>
+			<a id="mbOpen" class="btn btn-primary" href="#"><i class="fa fa-user"></i> Open Player</a>
+		</div>
+		<div class="mb-photo" id="mbPhoto"></div>
+	</div>
+	<div class="mb-strip-wrap">
+		<button type="button" class="mb-arrow" onclick="mbStep(-1)" title="Previous player"><i class="fa fa-chevron-left"></i></button>
+		<div class="mb-strip" id="mbStrip">
+			<button type="button" th:each="p, st : ${playerPoints}" class="mb-card" th:attr="data-index=${st.index}" onclick="mbSelect(+this.getAttribute('data-index'))">
+				<div class="mb-card-rank" th:text="${p.rank + ' · ' + #numbers.formatDecimal(p.points, 1, 1)}">1 · 26.6</div>
+				<div class="mb-card-img"></div>
+				<div class="mb-card-name" th:text="${p.name}" th:title="${p.name}">Alexander Zverev</div>
+			</button>
+		</div>
+		<button type="button" class="mb-arrow" onclick="mbStep(1)" title="Next player"><i class="fa fa-chevron-right"></i></button>
+	</div>
+	</th:block>
+
+	<div class="mb-section"><i class="fa fa-list"></i> Bets</div>
+	<p th:if="${wagers.isEmpty()}" class="text-muted">No bets yet.<span class="bets-editor" style="display: none"> Use <strong>Add Bet</strong> to record one.</span></p>
+
+	<!--/* Pick cell, shared by single bets and parlay legs (only rendered through th:insert) */-->
+	<th:block th:if="${false}"><th:block th:fragment="event(bet)">
+		<a th:if="${bet.eventUrl != null}" th:href="${bet.eventUrl}" class="label label-btn" th:classappend="${'label-' + bet.eventLevel}" th:text="${bet.tournamentText}" th:title="${'Show ' + bet.eventName}">Tour Finals</a>
+		<span th:if="${bet.eventUrl == null}" th:text="${bet.tournament}">Tour Finals</span>
+	</th:block></th:block>
+	<th:block th:if="${false}"><th:block th:fragment="pick(bet)">
+		<span class="text-nowrap" th:if="${bet.playerId != null}">
+			<img th:src="@{/images/flags/{code}.png(code=${bet.playerCountry.code})}" th:title="${bet.playerCountry.id}" width="24" height="20"/>
+			<a th:href="@{/playerProfile(playerId=${bet.playerId})}" th:text="${bet.playerName}">Carlos Alcaraz</a>
+		</span>
+		<span th:if="${bet.selection != null}" th:text="${bet.selection}" th:classappend="${bet.playerId != null ? 'bets-vs' : _}">Alcaraz -1.5 sets</span>
+		<span class="bets-vs text-nowrap" th:if="${bet.opponentId != null}">vs <a th:href="@{/playerProfile(playerId=${bet.opponentId})}" th:text="${bet.opponentName}">Daniil Medvedev</a>
+			<a th:if="${bet.playerId != null}" th:href="@{/headToHead(playerId1=${bet.playerId}, playerId2=${bet.opponentId})}" title="Head-to-head"><i class="fa fa-exchange"></i></a>
+		</span>
+		<span class="bets-notes" th:if="${bet.notes != null}" th:text="${bet.notes}">Note</span>
+	</th:block></th:block>
+
+	<div class="table-responsive" th:unless="${wagers.isEmpty()}">
+	<table id="betsTable" class="table table-condensed table-hover">
+		<thead>
+		<tr>
+			<th class="bets-editor bets-check" style="display: none" title="Tick bets to group them into a parlay"></th>
+			<th>Date</th>
+			<th>Tournament</th>
+			<th class="hidden-xs">Type</th>
+			<th>Pick</th>
+			<th class="text-right">Odds</th>
+			<th class="text-right hidden-xs" title="Win probability implied by the odds">Implied</th>
+			<th class="text-right hidden-xs" title="This site's win probability for the pick when the bet was saved (match-winner bets with both players); for a parlay, all legs together">Model</th>
+			<th class="text-right">Stake</th>
+			<th class="text-right hidden-xs">To Win</th>
+			<th class="text-center">Result</th>
+			<th class="text-right">Profit</th>
+			<th class="bets-editor" style="display: none"></th>
+		</tr>
+		</thead>
+		<th:block th:each="wager : ${wagers}">
+		<!--/* Single bet */-->
+		<tbody th:unless="${wager.parlay}" th:with="bet=${wager}" class="bets-single">
+		<tr th:attr="data-id=${bet.id}, data-placed=${bet.placed}, data-tournament=${bet.tournament}, data-type=${bet.betType}, data-player-id=${bet.playerId}, data-player-name=${bet.playerName}, data-opponent-id=${bet.opponentId}, data-opponent-name=${bet.opponentName}, data-selection=${bet.selection}, data-odds=${bet.odds}, data-stake=${bet.stake}, data-result=${bet.result}, data-notes=${bet.notes}">
+			<td class="bets-editor bets-check" style="display: none"><input type="checkbox" class="bets-select" title="Select for a parlay" onchange="updateParlaySelection()"/></td>
+			<td class="text-nowrap" th:text="${#temporals.format(bet.placed, 'dd-MM-yyyy')}">15-11-2026</td>
+			<td th:insert="~{this :: event(${bet})}">Tour Finals</td>
+			<td class="hidden-xs text-nowrap" th:text="${bet.betType}">Match Winner</td>
+			<td th:insert="~{this :: pick(${bet})}"></td>
+			<td class="text-right text-nowrap" th:text="${bet.oddsText}">-150</td>
+			<td class="text-right hidden-xs" th:text="${#numbers.formatDecimal(bet.impliedProbability, 1, 1) + '%'}">60.0%</td>
+			<td class="text-right hidden-xs text-nowrap">
+				<th:block th:if="${bet.modelPercentage != null}">
+					<span th:text="${#numbers.formatDecimal(bet.modelPercentage, 1, 1) + '%'}">65.0%</span>
+					<small th:classappend="${bet.edge >= 0 ? 'bets-plus' : 'bets-minus'}" title="Model minus implied probability" th:text="${'(' + (bet.edge >= 0 ? '+' : '') + #numbers.formatDecimal(bet.edge, 1, 1) + ')'}">(+5.0)</small>
+				</th:block>
+			</td>
+			<td class="text-right text-nowrap" th:text="${'$' + #numbers.formatDecimal(bet.stake, 1, 'COMMA', 2, 'POINT')}">$50.00</td>
+			<td class="text-right hidden-xs text-nowrap" th:text="${'$' + #numbers.formatDecimal(bet.toWin, 1, 'COMMA', 2, 'POINT')}">$33.33</td>
+			<td class="text-center">
+				<span class="label" th:classappend="${bet.result == 'WON' ? 'label-success' : (bet.result == 'LOST' ? 'label-danger' : (bet.result == 'VOID' ? 'label-default' : 'label-warning'))}"
+				      th:text="${bet.result == 'PENDING' ? 'Pending' : (bet.result == 'WON' ? 'Won' : (bet.result == 'LOST' ? 'Lost' : 'Void'))}"
+				      th:title="${bet.autoSettled ? 'Settled automatically from the match result' : _}">Pending</span>
+				<span class="mb-pts" th:if="${bet.points != null}" th:text="${'+' + #numbers.formatDecimal(bet.points, 1, 1) + ' pts'}" th:title="${'Points for ' + bet.playerName + ': ' + #numbers.formatDecimal(flatPoints, 1, 0) + ' flat + winnings on $' + #numbers.formatDecimal(bet.pointsStake, 1, 2) + (bet.leg ? ' (share of the parlay stake)' : '')}">+16.6 pts</span>
+			</td>
+			<td class="text-right text-nowrap" th:classappend="${bet.profit.signum() > 0 ? 'bets-plus' : (bet.profit.signum() < 0 ? 'bets-minus' : 'text-muted')}"
+			    th:text="${bet.pending ? '–' : (bet.profit.signum() < 0 ? '-$' : (bet.profit.signum() > 0 ? '+$' : '$')) + #numbers.formatDecimal(bet.profit.abs(), 1, 'COMMA', 2, 'POINT')}">+$33.33</td>
+			<td class="bets-editor text-nowrap" style="display: none">
+				<a href="#" onclick="return editBet(this)" title="Edit"><i class="fa fa-pencil"></i></a>&nbsp;
+				<a href="#" onclick="return deleteBet(this)" title="Delete" class="text-danger"><i class="fa fa-trash"></i></a>
+			</td>
+		</tr>
+		</tbody>
+		<!--/* Parlay: a summary row, then its legs */-->
+		<tbody th:if="${wager.parlay}" th:with="parlay=${wager}" class="bets-parlay"
+		       th:attr="data-parlay-id=${parlay.id}, data-placed=${parlay.placed}, data-odds=${parlay.odds}, data-computed-odds=${parlay.computedOdds}, data-stake=${parlay.stake}, data-notes=${parlay.notes}">
+		<tr class="bets-parlay-head">
+			<td class="bets-editor bets-check" style="display: none"></td>
+			<td class="text-nowrap" th:text="${#temporals.format(parlay.placed, 'dd-MM-yyyy')}">15-11-2026</td>
+			<td colspan="3">
+				<i class="fa fa-link"></i> <strong th:text="${parlay.legs.size() + '-leg parlay'}">2-leg parlay</strong>
+				<span class="bets-vs" th:if="${parlay.pending && parlay.wonLegs > 0}" th:text="${'· ' + parlay.wonLegs + ' of ' + parlay.legs.size() + ' legs won'}">· 1 of 2 legs won</span>
+				<span class="bets-notes" th:if="${parlay.notes != null}" th:text="${parlay.notes}">Note</span>
+			</td>
+			<td class="text-right text-nowrap"><strong th:text="${parlay.oddsText}">+120</strong>
+				<i th:if="${parlay.odds != parlay.computedOdds}" class="fa fa-bolt text-warning" th:title="${'Sportsbook odds; the legs multiply to ' + parlay.computedOddsText}"></i></td>
+			<td class="text-right hidden-xs" th:text="${#numbers.formatDecimal(parlay.impliedProbability, 1, 1) + '%'}">45.5%</td>
+			<td class="text-right hidden-xs text-nowrap">
+				<th:block th:if="${parlay.modelPercentage != null}">
+					<span th:text="${#numbers.formatDecimal(parlay.modelPercentage, 1, 1) + '%'}">41.6%</span>
+					<small th:classappend="${parlay.edge >= 0 ? 'bets-plus' : 'bets-minus'}" title="Model (all legs win) minus implied probability" th:text="${'(' + (parlay.edge >= 0 ? '+' : '') + #numbers.formatDecimal(parlay.edge, 1, 1) + ')'}">(-3.9)</small>
+				</th:block>
+			</td>
+			<td class="text-right text-nowrap"><strong th:text="${'$' + #numbers.formatDecimal(parlay.stake, 1, 'COMMA', 2, 'POINT')}">$10.00</strong></td>
+			<td class="text-right hidden-xs text-nowrap" th:text="${'$' + #numbers.formatDecimal(parlay.toWin, 1, 'COMMA', 2, 'POINT')}" th:title="${parlay.oddsReduced ? 'Reduced: void legs are taken out' : _}">$12.00</td>
+			<td class="text-center">
+				<span class="label" th:classappend="${parlay.result == 'WON' ? 'label-success' : (parlay.result == 'LOST' ? 'label-danger' : (parlay.result == 'VOID' ? 'label-default' : 'label-warning'))}"
+				      th:text="${parlay.result == 'PENDING' ? 'Pending' : (parlay.result == 'WON' ? 'Won' : (parlay.result == 'LOST' ? 'Lost' : 'Void'))}">Pending</span>
+			</td>
+			<td class="text-right text-nowrap" th:classappend="${parlay.profit.signum() > 0 ? 'bets-plus' : (parlay.profit.signum() < 0 ? 'bets-minus' : 'text-muted')}"
+			    th:text="${parlay.pending ? '–' : (parlay.profit.signum() < 0 ? '-$' : (parlay.profit.signum() > 0 ? '+$' : '$')) + #numbers.formatDecimal(parlay.profit.abs(), 1, 'COMMA', 2, 'POINT')}">–</td>
+			<td class="bets-editor text-nowrap" style="display: none">
+				<a href="#" onclick="return editParlay(this)" title="Edit parlay odds, stake, date, notes"><i class="fa fa-pencil"></i></a>&nbsp;
+				<a href="#" onclick="return ungroupParlay(this)" title="Ungroup into single bets"><i class="fa fa-chain-broken"></i></a>&nbsp;
+				<a href="#" onclick="return deleteParlay(this)" title="Delete parlay and its legs" class="text-danger"><i class="fa fa-trash"></i></a>
+			</td>
+		</tr>
+		<tr th:each="bet : ${parlay.legs}" class="bets-leg"
+		    th:attr="data-id=${bet.id}, data-parlay-id=${parlay.id}, data-placed=${bet.placed}, data-tournament=${bet.tournament}, data-type=${bet.betType}, data-player-id=${bet.playerId}, data-player-name=${bet.playerName}, data-opponent-id=${bet.opponentId}, data-opponent-name=${bet.opponentName}, data-selection=${bet.selection}, data-odds=${bet.odds}, data-stake=${bet.stake}, data-result=${bet.result}, data-notes=${bet.notes}">
+			<td class="bets-editor bets-check" style="display: none"></td>
+			<td class="text-nowrap text-muted bets-leg-date" th:text="${#temporals.format(bet.placed, 'dd-MM-yyyy')}">15-11-2026</td>
+			<td th:insert="~{this :: event(${bet})}">Tour Finals</td>
+			<td class="hidden-xs text-nowrap" th:text="${bet.betType}">Match Winner</td>
+			<td th:insert="~{this :: pick(${bet})}"></td>
+			<td class="text-right text-nowrap" th:text="${bet.oddsText}">-180</td>
+			<td class="text-right hidden-xs" th:text="${#numbers.formatDecimal(bet.impliedProbability, 1, 1) + '%'}">64.3%</td>
+			<td class="text-right hidden-xs text-nowrap">
+				<th:block th:if="${bet.modelPercentage != null}">
+					<span th:text="${#numbers.formatDecimal(bet.modelPercentage, 1, 1) + '%'}">55.2%</span>
+					<small th:classappend="${bet.edge >= 0 ? 'bets-plus' : 'bets-minus'}" title="Model minus implied probability" th:text="${'(' + (bet.edge >= 0 ? '+' : '') + #numbers.formatDecimal(bet.edge, 1, 1) + ')'}">(-9.1)</small>
+				</th:block>
+			</td>
+			<td></td>
+			<td class="hidden-xs"></td>
+			<td class="text-center">
+				<span class="label bets-leg-result" th:classappend="${bet.result == 'WON' ? 'label-success' : (bet.result == 'LOST' ? 'label-danger' : (bet.result == 'VOID' ? 'label-default' : 'label-warning'))}"
+				      th:text="${bet.result == 'PENDING' ? 'Pending' : (bet.result == 'WON' ? 'Won' : (bet.result == 'LOST' ? 'Lost' : 'Void'))}"
+				      th:title="${bet.autoSettled ? 'Settled automatically from the match result' : _}">Pending</span>
+				<span class="mb-pts" th:if="${bet.points != null}" th:text="${'+' + #numbers.formatDecimal(bet.points, 1, 1) + ' pts'}" th:title="${'Points for ' + bet.playerName + ': ' + #numbers.formatDecimal(flatPoints, 1, 0) + ' flat + winnings on $' + #numbers.formatDecimal(bet.pointsStake, 1, 2) + (bet.leg ? ' (share of the parlay stake)' : '')}">+16.6 pts</span>
+			</td>
+			<td></td>
+			<td class="bets-editor text-nowrap" style="display: none">
+				<a href="#" onclick="return editBet(this)" title="Edit leg"><i class="fa fa-pencil"></i></a>&nbsp;
+				<a href="#" onclick="return deleteBet(this)" title="Delete leg" class="text-danger"><i class="fa fa-trash"></i></a>
+			</td>
+		</tr>
+		</tbody>
+		</th:block>
+	</table>
+	</div>
+	</div>
+
+	<div id="betModal" class="modal fade" tabindex="-1" role="dialog" aria-labelledby="betModalTitle">
+		<div class="modal-dialog" role="document">
+			<div class="modal-content">
+				<div class="modal-header">
+					<button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+					<h4 id="betModalTitle" class="modal-title">Add Bet</h4>
+				</div>
+				<div class="modal-body">
+					<form id="betForm" onsubmit="saveBet(); return false;">
+						<input type="hidden" id="betId"/>
+						<input type="hidden" id="betPlayerId"/>
+						<input type="hidden" id="betOpponentId"/>
+						<div class="row">
+							<div class="form-group col-sm-4">
+								<label for="betPlaced">Date</label>
+								<input type="date" id="betPlaced" class="form-control" required="required"/>
+							</div>
+							<div class="form-group col-sm-8">
+								<label for="betTournament">Tournament</label>
+								<input type="text" id="betTournament" class="form-control" placeholder="Pick an event, or leave empty to detect it from the players"/>
+							</div>
+						</div>
+						<div class="row">
+							<div class="form-group col-sm-6">
+								<label for="betType">Bet type</label>
+								<select id="betType" class="form-control">
+									<option th:each="type : ${betTypes}" th:value="${type}" th:text="${type}">Match Winner</option>
+								</select>
+							</div>
+							<div class="form-group col-sm-6">
+								<label for="betResult">Result</label>
+								<select id="betResult" class="form-control">
+									<option value="PENDING">Pending</option>
+									<option value="WON">Won</option>
+									<option value="LOST">Lost</option>
+									<option value="VOID">Void / refunded</option>
+								</select>
+							</div>
+						</div>
+						<div class="row">
+							<div class="form-group col-sm-6">
+								<label for="betPlayerName">Player (your pick)</label>
+								<input type="text" id="betPlayerName" class="form-control" placeholder="Start typing a name" autocomplete="off"/>
+							</div>
+							<div class="form-group col-sm-6">
+								<label for="betOpponentName">Opponent</label>
+								<input type="text" id="betOpponentName" class="form-control" placeholder="Optional" autocomplete="off"/>
+							</div>
+						</div>
+						<div class="form-group">
+							<label for="betSelection">Selection</label>
+							<input type="text" id="betSelection" class="form-control"/>
+							<span id="betSelectionHelp" class="help-block"></span>
+						</div>
+						<div class="row">
+							<div class="form-group col-sm-6">
+								<label for="betOdds">Odds (American)</label>
+								<input type="text" id="betOdds" class="form-control" placeholder="+150 or -120" inputmode="numeric" required="required"/>
+							</div>
+							<div class="form-group col-sm-6">
+								<label for="betStake">Stake ($)</label>
+								<input type="number" id="betStake" class="form-control" min="0.01" step="0.01" required="required"/>
+							</div>
+						</div>
+						<p id="betPreview" class="text-muted"></p>
+						<div class="form-group">
+							<label for="betNotes">Notes</label>
+							<input type="text" id="betNotes" class="form-control" placeholder="Optional"/>
+						</div>
+						<div id="betError" class="alert alert-danger" style="display: none"></div>
+						<button type="submit" style="display: none"></button>
+					</form>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
+					<button type="button" class="btn btn-primary" onclick="saveBet()">Save</button>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div id="parlayModal" class="modal fade" tabindex="-1" role="dialog" aria-labelledby="parlayModalTitle">
+		<div class="modal-dialog" role="document">
+			<div class="modal-content">
+				<div class="modal-header">
+					<button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+					<h4 id="parlayModalTitle" class="modal-title">Make Parlay</h4>
+				</div>
+				<div class="modal-body">
+					<form onsubmit="saveParlay(); return false;">
+						<input type="hidden" id="parlayId"/>
+						<label>Legs</label>
+						<ul id="parlayLegs"></ul>
+						<div class="row">
+							<div class="form-group col-sm-4">
+								<label for="parlayPlaced">Date</label>
+								<input type="date" id="parlayPlaced" class="form-control" required="required"/>
+							</div>
+							<div class="form-group col-sm-4">
+								<label for="parlayOdds">Parlay odds</label>
+								<input type="text" id="parlayOdds" class="form-control" inputmode="numeric" required="required"/>
+							</div>
+							<div class="form-group col-sm-4">
+								<label for="parlayStake">Stake ($)</label>
+								<input type="number" id="parlayStake" class="form-control" min="0.01" step="0.01" required="required"/>
+							</div>
+						</div>
+						<p id="parlayPreview" class="text-muted"></p>
+						<div class="form-group">
+							<label for="parlayNotes">Notes</label>
+							<input type="text" id="parlayNotes" class="form-control" placeholder="Optional"/>
+						</div>
+						<p class="help-block">The odds start as the legs' odds multiplied together; change them to your sportsbook's price if it differs (e.g. a boost). The result follows the legs.</p>
+						<div id="parlayError" class="alert alert-danger" style="display: none"></div>
+						<button type="submit" style="display: none"></button>
+					</form>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
+					<button type="button" class="btn btn-primary" onclick="saveParlay()">Save Parlay</button>
+				</div>
+			</div>
+		</div>
+	</div>
+	<script type="text/javascript" th:inline="javascript">
+		var mbPlayers = /*[[${playerPoints}]]*/ [];
+		var mbIndex = 0;
+		var mbPhotoCache = {};
+		var mbLocalPhotos = /*[[${@playerImages.images}]]*/ {};
+
+		function mbNormalize(text) {
+			return text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z]/g, "");
+		}
+
+		// The user's own photos (ultimate-tennis-stats-data/player-images), matched by full name, last two words or last name
+		function mbLocalPhoto(name) {
+			var words = name.split(" ");
+			var keys = [name, words.slice(-2).join(" "), words[words.length - 1]];
+			for (var i = 0; i < keys.length; i++) {
+				var url = mbLocalPhotos[mbNormalize(keys[i])];
+				if (url)
+					return {small: url, big: url, local: true};
+			}
+			return null;
+		}
+
+		// Player photos: local ones first, else Wikipedia (freely licensed); null when the player has no tennis article with an image
+		function mbPhoto(name) {
+			if (mbPhotoCache[name])
+				return mbPhotoCache[name];
+			var local = mbLocalPhoto(name);
+			if (local)
+				return mbPhotoCache[name] = Promise.resolve(local);
+			var key = "mbPhoto:" + name;
+			try {
+				var stored = sessionStorage.getItem(key);
+				if (stored !== null)
+					return mbPhotoCache[name] = Promise.resolve(stored ? JSON.parse(stored) : null);
+			}
+			catch (e) {}
+			function summary(title) {
+				return fetch("https://en.wikipedia.org/api/rest_v1/page/summary/" + encodeURIComponent(title.replace(/ /g, "_")))
+					.then(function(r) { return r.ok ? r.json() : null; })
+					.then(function(d) { return d && d.type === "standard" && /tennis/i.test(d.description || d.extract || "") ? d : null; });
+			}
+			return mbPhotoCache[name] = summary(name)
+				.then(function(d) { return d || summary(name + " (tennis)"); })
+				.then(function(d) {
+					var photo = null;
+					if (d && d.thumbnail) {
+						var big = d.originalimage && d.originalimage.width <= 900 ? d.originalimage.source : d.thumbnail.source.replace(/\/\d+px-/, "/800px-");
+						photo = {small: d.thumbnail.source, big: big};
+					}
+					try { sessionStorage.setItem(key, JSON.stringify(photo)); } catch (e) {}
+					return photo;
+				})
+				.catch(function() { return null; });
+		}
+
+		function mbInitials(name) {
+			return name.split(" ").map(function(w) { return w.charAt(0); }).join("").substring(0, 3).toUpperCase();
+		}
+
+		function mbEsc(text) {
+			return $("<div>").text(text == null ? "" : text).html();
+		}
+
+		function mbMoney(v) {
+			v = Number(v) || 0;
+			return (v < 0 ? "-$" : v > 0 ? "+$" : "$") + Math.abs(v).toFixed(2);
+		}
+
+		function mbSelect(i) {
+			if (!mbPlayers.length)
+				return;
+			mbIndex = (i + mbPlayers.length) % mbPlayers.length;
+			var p = mbPlayers[mbIndex], top = mbPlayers[0].points || 1;
+			$("#mbName").text(p.name);
+			$("#mbRank").text(p.rank);
+			$("#mbRing").toggleClass("mb-ring-1", p.rank === 1);
+			$("#mbMeta").html((p.countryCode ? '<img src="/images/flags/' + mbEsc(p.countryCode) + '.png" width="24" height="20"/>' + mbEsc(p.countryName) + " · " : "") +
+				"#" + p.rank + " of " + mbPlayers.length + " players · " + p.wins + "-" + p.losses);
+			$("#mbPoints").text(p.points.toFixed(1));
+			$("#mbPointsBar").css("width", Math.max(0, 100 * p.points / top) + "%");
+			$("#mbWinPct").text(p.winPct != null ? Math.round(p.winPct) + "%" : "–");
+			$("#mbWinBar").css("width", (p.winPct || 0) + "%");
+			var profit = Number(p.profit) || 0;
+			$("#mbStats").html([
+				["Points", p.points.toFixed(1), p.flatPoints.toFixed(1) + " flat + " + p.oddsPoints.toFixed(1) + " won on $" + p.credited.toFixed(2) + " staked"],
+				["Wins", p.wins], ["Record", p.wins + "-" + p.losses],
+				["Best odds", p.bestOdds || "–", "Longest odds won"], ["Avg odds", p.avgOdds || "–", "Average odds of the wins"],
+				["Profit", '<span class="' + (profit > 0 ? "bets-plus" : profit < 0 ? "bets-minus" : "") + '">' + mbMoney(profit) + "</span>", "Single bets on the player (parlays not included)"]
+			].map(function(t) { return '<div' + (t[2] ? ' title="' + mbEsc(t[2]) + '"' : "") + "><span>" + t[0] + "</span><strong>" + t[1] + "</strong></div>"; }).join(""));
+			$("#mbFoot").text(p.lastWin ? "Last win " + p.lastWin + (p.lastWinEvent ? " · " + p.lastWinEvent : "") : "No wins yet");
+			$("#mbOpen").attr("href", "/playerProfile?playerId=" + p.playerId);
+			var last = p.name.split(" ").pop();
+			var $photo = $("#mbPhoto").html('<div class="mb-mark">' + mbEsc(last) + "</div>");
+			var name = p.name;
+			mbPhoto(name).then(function(photo) {
+				if (mbPlayers[mbIndex].name !== name)
+					return;
+				if (photo)
+					$('<img alt=""/>').attr("src", photo.big).attr("alt", name).on("error", function() { $(this).replaceWith('<div class="mb-initials">' + mbInitials(name) + "</div>"); }).appendTo($photo);
+				else
+					$photo.append('<div class="mb-initials">' + mbInitials(name) + "</div>");
+			});
+			var $cards = $("#mbStrip .mb-card").removeClass("active");
+			var card = $cards.eq(mbIndex).addClass("active")[0];
+			if (card && card.scrollIntoView)
+				card.scrollIntoView({block: "nearest", inline: "nearest", behavior: "smooth"});
+		}
+
+		function mbStep(delta) {
+			mbSelect(mbIndex + delta);
+		}
+
+		$(function() {
+			if (!mbPlayers.length)
+				return;
+			$("#mbStrip .mb-card").each(function(i) {
+				var name = mbPlayers[i].name, $img = $(this).find(".mb-card-img");
+				$img.html('<span class="mb-card-init">' + mbInitials(name) + "</span>");
+				mbPhoto(name).then(function(photo) {
+					if (photo)
+						$('<img alt="" loading="lazy"/>').attr("src", photo.small).on("load", function() { $img.empty().append(this); }).appendTo($("<div>"));
+				});
+			});
+			mbSelect(0);
+			$(document).on("keydown", function(e) {
+				if ($(e.target).is("input, textarea, select") || $(".modal.in").length)
+					return;
+				if (e.key === "ArrowLeft") mbStep(-1);
+				else if (e.key === "ArrowRight") mbStep(1);
+			});
+		});
+	</script>
+	<footer th:include="fragments/footer :: copy"></footer>
+</body>
+</html>

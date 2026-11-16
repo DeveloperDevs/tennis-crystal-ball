@@ -7,18 +7,22 @@ def stopwatch = Stopwatch.createStarted()
 
 def sqlPool = new SqlPool()
 def loader = new ATPTennisLoader()
+// Live scrapers (atptour.com, Wikipedia) were written against 2022-era page layouts and are likely broken; opt in with -Dtcb.data.scrape=true
+def scrape = LoadParams.getBooleanProperty(LoadParams.SCRAPE_PROPERTY, false)
 
 loader.loadPlayers(new PlayerLoader(sqlPool))
 sqlPool.withSql { sql -> loader.loadAdditionalPlayerData(sql) }
 
 loader.loadRankings(new RankingLoader(sqlPool))
 sqlPool.withSql { sql -> loader.loadAdditionalRankingData(sql) }
-sqlPool.withSql { sql -> MissingRankingsLoader.loadRankings(sql) }
-LoadNewRankings.loadRankings(sqlPool)
+if (scrape) {
+	sqlPool.withSql { sql -> MissingRankingsLoader.loadRankings(sql) } // fills 1976-77 ranking gaps from atptour.com
+	LoadNewRankings.loadRankings(sqlPool)
+}
 
 loader.loadMatches(new MatchLoader(sqlPool))
 sqlPool.withSql { sql -> loader.loadAdditionalTournamentData(sql) }
-LoadNewTournaments.loadTournaments(sqlPool)
+if (scrape) LoadNewTournaments.loadTournaments(sqlPool)
 
 sqlPool.withSql { sql -> loader.vacuum(sql) }
 
@@ -34,7 +38,7 @@ sqlPool.withSql { sql -> loader.vacuum(sql) }
 
 sqlPool.withSql { sql -> new RecordsLoader().loadRecords(loader, sql) }
 
-new WikipediaPlayerDataLoader(sqlPool).updatePlayerData()
+if (scrape) new WikipediaPlayerDataLoader(sqlPool).updatePlayerData()
 
 sqlPool.withSql { sql -> loader.vacuum(sql) }
 

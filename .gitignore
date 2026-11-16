@@ -4,3 +4,6 @@
 build
 classes
 out
+__pycache__/
+.DS_Store
+/ultimate-tennis-stats-data/

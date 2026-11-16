@@ -108,7 +108,6 @@
 </head>
 <body class="container">
 	<header th:include="fragments/header :: title"></header>
-	<th:block th:include="fragments/ads :: responsive"/>
 	<h3>
 		<a id="prevInProgressEvent" th:if="${prevEvent}" class="btn btn-info btn-xs" th:href="@{/inProgressEventForecast(inProgressEventId=${prevEvent.id})}"><i class="fa fa-chevron-left"></i></a>
 		[[${inProgressEvent.name}]] Forecast <a th:href="@{/inProgressEventForecast(name=${forecast.event.name})}" th:title="|Permalink to ${forecast.event.name} forecast|"><h4 style="margin: 0" class="glyphicon glyphicon-link"></h4></a>
@@ -226,7 +225,7 @@
 				<li th:each="baseResult : ${forecast.baseResults}" th:class="${baseResultStat.last ? 'active' : _}">
 					<a th:id="'baseResult' + ${baseResult} + 'Pill'" data-toggle="pill" th:href="'#baseResult' + ${baseResult}" th:text="${baseResult}">W</a>
 				</li>
-				<li><a id="probablePill" data-toggle="pill" href="#probable" th:data-url="'/inProgressEventProbableMatches?inProgressEventId=' + ${inProgressEvent.id} + ${params}">Probable Matchups</a></li>
+				<li th:unless="${inProgressEvent.roundRobin}"><a id="probablePill" data-toggle="pill" href="#probable" th:data-url="'/inProgressEventProbableMatches?inProgressEventId=' + ${inProgressEvent.id} + ${params}">Probable Matchups</a></li>
 				<li><a id="playerPathPill" data-toggle="pill" href="#playerPath" th:data-url="'/inProgressEventPlayerPath?inProgressEventId=' + ${inProgressEvent.id} + ${params}">Player Path</a></li>
 				<li><a id="favoritesPill" data-toggle="pill" href="#favorites" th:data-url="'/inProgressEventFavorites?inProgressEventId=' + ${inProgressEvent.id} + ${params}">Favorites</a></li>
 				<li><a id="statisticsPill" data-toggle="pill" href="#statistics" th:data-url="'/inProgressEventStats?inProgressEventId=' + ${inProgressEvent.id} + ${params}">Statistics<sup class="new-feature"></sup></a></li>
@@ -235,9 +234,12 @@
 				<div id="results" class="tab-pane fade"><div class="loading"></div></div>
 				<div th:each="baseResult, baseResultStat : ${forecast.baseResults}" th:id="'baseResult' + ${baseResult}" th:with="current=${baseResult == 'Current'}, playersForecast=${forecast.getPlayersForecast(baseResult)}, prevPlayersForecast=${forecast.getPrevPlayersForecast(baseResult)}" class="tab-pane fade" th:attrappend="class=${baseResultStat.last ? ' in active' : _}">
 					<br/>
-					<table class="table table-condensed table-hover text-nowrap forecast-table" th:with="resultCount=${playersForecast.results.size() + (baseResultStat.first ? 1 : 0) + (priceFormat != null ? 1 : 0)}, entryCount=${playersForecast.playerForecasts.size()}">
+					<table th:unless="${current && roundRobinGroups != null && !roundRobinGroups.empty}" class="table table-condensed table-hover text-nowrap forecast-table" th:with="resultCount=${playersForecast.results.size() + (baseResultStat.first ? 1 : 0) + (priceFormat != null ? 1 : 0)}, entryCount=${playersForecast.playerForecasts.size()}">
 						<th:block th:each="playerForecast : ${playersForecast.playerForecasts}">
-						<thead th:if="${playerForecastStat.index % 8 == 0}">
+						<thead th:if="${playerForecastStat.index % 8 == 0 || (inProgressEvent.roundRobin && playerForecastStat.index % 4 == 0)}">
+							<tr th:if="${inProgressEvent.roundRobin}">
+								<th th:colspan="${6 + resultCount}" th:text="'Group ' + ${playerForecastStat.index / 4 == 0 ? 'A' : 'B'}">Group A</th>
+							</tr>
 							<th:block th:if="${entryCount == 32}" th:with="halfIndex=${2 * playerForecastStat.index / entryCount}">
 								<tr th:if="${playerForecastStat.index == halfIndex * entryCount / 2}" th:with="drawSection=${halfIndex == 0 ? 'Top Half' : 'Bottom Half'}">
 									<th colspan="2" th:text="${drawSection}">Top Half</th>
@@ -268,7 +270,7 @@
 								<th th:if="${priceFormat}" class="text-right" title="Tournament winning odds">Odds</th>
 							</tr>
 						</thead>
-						<tr th:with="otherPlayer=${playersForecast.getOpponent(playerForecastStat.index)}, showH2H=${playerForecast != null && playerForecast.known && otherPlayer != null && otherPlayer.known}">
+						<tr th:with="otherPlayer=${playersForecast.getOpponent(playerForecastStat.index)}, showH2H=${!inProgressEvent.roundRobin && playerForecast != null && playerForecast.known && otherPlayer != null && otherPlayer.known}">
 							<td class="text-right" th:text="${playerForecast.seedAndEntry()}">1</td>
 							<th:block th:if="${playerForecast.known}">
 							<td colspan="2">
@@ -299,11 +301,12 @@
 							</th:block>
 							<td th:if="${priceFormat}" class="text-right" th:text="${playerForecast.getPrice('W', priceFormat)}">6.25</td>
 						</tr>
-						<thead th:if="${playerForecastStat.index % 8 == 7 && !playerForecastStat.last}">
+						<thead th:if="${(playerForecastStat.index % 8 == 7 || (inProgressEvent.roundRobin && playerForecastStat.index % 4 == 3)) && !playerForecastStat.last}">
 							<tr><td th:colspan="${6 + resultCount}">&nbsp;</td></tr>
 						</thead>
 						</th:block>
 					</table>
+					<th:block th:if="${current && roundRobinGroups != null && !roundRobinGroups.empty}" th:include="fragments/roundRobin :: groups(${roundRobinGroups}, ${playersForecast.results}, ${inProgressEvent})"/>
 				</div>
 				<div id="probable" class="tab-pane fade"><div class="loading"></div></div>
 				<div id="playerPath" class="tab-pane fade"><div class="loading"></div></div>

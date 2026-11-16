@@ -87,6 +87,10 @@ public class Country {
 		entry("FIJ", "FJI"),
 		entry("FRG", "DEU"),
 		entry("GER", "DEU"),
+		entry("GDR", "DEU"),
+		entry("BIR", "MMR"),
+		entry("LEB", "LBN"),
+		entry("SER", "SRB"),
 		entry("GRE", "GRC"),
 		entry("GRN", "GRL"),
 		entry("GUA", "GTM"),
@@ -148,6 +152,7 @@ public class Country {
 		entry("ZIM", "ZWE"),
 
 		entry("BIZ", "???"),
+		entry("?", "???"),
 		entry("NMI", "???"),
 		entry("TKS", "???"),
 		entry("UNK", "???")

@@ -166,9 +166,54 @@ public class MatchPredictionService implements HasCache {
 			new H2HMatchPredictor(matchData1, matchData2, playerId1, playerId2, date1, date2, surface, level, tournamentId, round, bestOf, config),
 			new WinningPctMatchPredictor(matchData1, matchData2, rankingData1, rankingData2, playerData1, playerData2, date1, date2, surface, level, round, tournamentId, bestOf, config)
 		), config, bestOf);
+		addH2HDominance(prediction, matchData1, matchData2, playerId1, playerId2, config);
 		prediction.setRankingData1(rankingData1);
 		prediction.setRankingData2(rankingData2);
 		return prediction;
+	}
+
+
+	// H2H dominance
+
+	/** The largest share of the prediction a completely one-sided head-to-head can take. */
+	static final double H2H_DOMINANCE_MAX_SHARE = 0.5;
+	/** Lopsidedness ((won - lost) / sqrt(matches)) below which the head-to-head gets no extra weight: 2-1, 4-3, 6-4... */
+	static final double H2H_DOMINANCE_MIN = 0.75;
+	/** Lopsidedness at which the head-to-head takes the full share: 6-0, 8-1, 12-3... */
+	static final double H2H_DOMINANCE_FULL = 2.5;
+	/** Fewer head-to-head matches than this are too few to read a mental edge into. */
+	static final int H2H_DOMINANCE_MIN_MATCHES = 3;
+
+	/**
+	 * Gives a lopsided head-to-head extra weight on top of the H2H area (which treats every record mildly): one player
+	 * dominating the matchup (6-0) carries a mental edge, while a close or short record (2-1) means little. The extra
+	 * item pulls the prediction towards the (smoothed) head-to-head win rate, taking up to H2H_DOMINANCE_MAX_SHARE of it.
+	 */
+	private static void addH2HDominance(MatchPrediction prediction, List<MatchData> matchData1, List<MatchData> matchData2, int playerId1, int playerId2, PredictionConfig config) {
+		if (!config.isAreaEnabled(PredictionArea.H2H) || !config.isAreaEnabled(PredictionArea.RANKING))
+			return;
+		var won1 = matchData1.stream().filter(isOpponent(playerId2)).mapToInt(MatchData::getPMatches).sum();
+		var won2 = matchData2.stream().filter(isOpponent(playerId1)).mapToInt(MatchData::getPMatches).sum();
+		var share = h2hDominanceShare(won1, won2);
+		if (share <= 0.0)
+			return;
+		var rate1 = (won1 + 1.0) / (won1 + won2 + 2.0);
+		// Only ever push towards the head-to-head leader: when the model already rates the leader above their H2H rate, leave it be
+		var current1 = prediction.getWinProbability1();
+		if (won1 > won2 ? current1 >= rate1 : current1 <= rate1)
+			return;
+		var factor = share / (1.0 - share);
+		prediction.addItemProbability1(H2HPredictionItem.OVERALL, prediction.getItemProbabilitiesWeight1() * factor, rate1);
+		prediction.addItemProbability2(H2HPredictionItem.OVERALL, prediction.getItemProbabilitiesWeight2() * factor, 1.0 - rate1);
+	}
+
+	public static double h2hDominanceShare(int won1, int won2) {
+		var total = won1 + won2;
+		if (total < H2H_DOMINANCE_MIN_MATCHES)
+			return 0.0;
+		var lopsidedness = abs(won1 - won2) / sqrt(total);
+		var dominance = min(1.0, max(0.0, (lopsidedness - H2H_DOMINANCE_MIN) / (H2H_DOMINANCE_FULL - H2H_DOMINANCE_MIN)));
+		return H2H_DOMINANCE_MAX_SHARE * dominance;
 	}
 
 	private MatchPrediction predictMatchVsQualifier(int playerId, LocalDate date, Integer tournamentId, Integer tournamentEventId, boolean inProgress, Surface surface, Boolean indoor, TournamentLevel level, short bestOf, Round round, PredictionConfig config) {
